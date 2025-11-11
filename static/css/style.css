@@ -1,0 +1,6 @@
+body { background-color: #f8f9fa; }
+.font-monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+textarea#json_input { white-space: pre; }
+
+
+

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Прогноз нагрузки</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+      <div class="container d-flex justify-content-between align-items-center">
+        <a class="navbar-brand m-0" href="/">LoadPredict</a>
+        <div class="d-flex align-items-center"></div>
+      </div>
+    </nav>
+    <main class="container my-4">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="my-2">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <div class="row">
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header">
+              Входной JSON со ступенями
+            </div>
+            <div class="card-body">
+              <form method="post" action="{{ url_for('forecast_html') }}" id="forecast-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="mb-3">
+                  <label for="dataset-select" class="form-label">Набор данных</label>
+                  <select class="form-select" id="dataset-select" aria-label="Выбрать набор данных" style="width:80%;">
+                    <option value="">— выбрать набор —</option>
+                    {% for name in dataset_names %}
+                    <option value="{{ name }}">{{ name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="json_input" class="form-label d-flex align-items-center justify-content-between">
+                    <span class="me-2">JSON (steps/target/capacity/modeling)</span>
+                    <span class="badge rounded-pill bg-secondary" id="json-badge">Проверка: —</span>
+                  </label>
+                  <textarea class="form-control font-monospace" id="json_input" name="json_input" rows="14" required placeholder='Вставьте JSON сюда...'>{{ sample_json }}</textarea>
+                </div>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label for="target_rps" class="form-label">Целевой RPS</label>
+                    <input class="form-control" type="number" inputmode="numeric" step="1" min="1" id="target_rps" name="target_rps" placeholder="1500">
+                    <div class="form-text">Целевой поток запросов (RPS &gt; 0). Используется для прогнозов и рекомендаций.</div>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="slo_ms_max_optional" class="form-label">SLO max (мс)</label>
+                    <input class="form-control" type="number" inputmode="numeric" step="1" min="1" id="slo_ms_max_optional" name="slo_ms_max_optional" placeholder="200">
+                    <div class="form-text">SLO по максимальной задержке (&gt; 0 мс). Строится горизонтальная линия на графике задержек.</div>
+                  </div>
+                </div>
+                <div class="d-flex mt-3">
+                  <button type="button" class="btn btn-outline-secondary me-2" id="btn-format">Форматировать JSON</button>
+                  <button type="submit" class="btn btn-primary" id="btn-submit">Рассчитать прогноз</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header">Подсказки</div>
+            <div class="card-body small">
+              <p class="mb-2">Вы можете выбрать готовый набор данных в выпадающем списке над редактором JSON. Редактор подсвечивает синтаксис и проверяет валидность JSON; кнопка «Рассчитать прогноз» блокируется при ошибке. Кнопка «Форматировать JSON» приведёт документ к читаемому виду.</p>
+              <div class="fw-bold mb-1">Ступени (steps[])</div>
+              <ul class="mb-2">
+                <li><code>step</code>: string|int — идентификатор шага (например, <code>"s1"</code> или <code>1</code>).</li>
+                <li><code>rps</code>: number &gt; 0 — запросов в секунду на шаге.</li>
+                <li><code>avg_ms</code>, <code>max_ms</code>: ms — средняя и максимальная задержки; <code>max_ms ≥ avg_ms</code>.</li>
+                <li><code>pods</code>: integer ≥ 1 — число подов сервиса в этом шаге.</li>
+                <li><code>cpu_usage_m</code>: millicores — суммарный фактический CPU usage сервиса на шаге.</li>
+                <li><code>cpu_request_m_per_pod</code>, <code>cpu_limit_m_per_pod</code>: millicores на под.</li>
+                <li><code>mem_workingset_mib</code>: MiB — фактическая память (workingset) суммарно.</li>
+                <li><code>mem_request_mib_per_pod</code>, <code>mem_limit_mib_per_pod</code>: MiB на под.</li>
+                <li><code>net_in_mbps</code>, <code>net_out_mbps</code>: MB/s — входящий/исходящий трафик.</li>
+                <li><code>concurrency_optional</code>: integer ≥ 0 — одновременность (если известна).</li>
+                <li class="text-muted">Обратная совместимость: поля-доли <code>cpu_util</code>, <code>ram_util</code> могут использоваться, если абсолютные K8s поля не заданы.</li>
+              </ul>
+              <div class="fw-bold mb-1">Цель (target)</div>
+              <ul class="mb-2">
+                <li><code>target_rps</code>: number &gt; 0 — целевой RPS для прогноза.</li>
+                <li><code>slo_ms_max_optional</code>: number &gt; 0 — SLO по максимальной задержке (мс).</li>
+              </ul>
+              <div class="fw-bold mb-1">Емкость/пороги (capacity)</div>
+              <ul class="mb-2">
+                <li><code>u_max_cpu</code>, <code>u_max_ram</code>: (0..1] — целевые утилизации относительно requests (HPA-логика).</li>
+                <li><code>net_capacity_in_mbps_optional</code>, <code>net_capacity_out_mbps_optional</code>: &gt; 0 — доступная полоса по сети (MB/s).</li>
+                <li><code>mmc_c_optional</code>: integer ≥ 1 — число серверов в модели M/M/c (для очередей/ожидания).</li>
+              </ul>
+              <div class="fw-bold mb-1">Моделирование (modeling)</div>
+              <ul class="mb-2">
+                <li><code>use_m_m_1</code>: включить M/M/1 (1 сервер). Быстрый базовый ориентир для однопоточных сервисов. Показательна при низкой нагрузке; нестабильна при ρ ≥ 1.</li>
+                <li><code>use_m_m_c</code>: включить M/M/c (несколько серверов). Учитывает ожидание в очереди; подходит для сервисов с несколькими воркерами/подами. Использует <code>capacity.mmc_c_optional</code> как число серверов <code>c</code>.</li>
+                <li><code>use_kingman</code>: включить G/G/1 (Kingman). Учитывает вариативность входа и обслуживания; улучшает оценку задержек для одного сервера при «неровной» нагрузке (требует ρ < 1).</li>
+                <li><code>use_g_g_c</code>: включить G/G/c (Allen–Cunneen). Практичная аппроксимация для нескольких серверов/подов с вариативностью. Также использует <code>capacity.mmc_c_optional</code> как <code>c</code>.</li>
+                <li class="text-muted">Можно включать несколько моделей одновременно — результаты будут показаны вместе в таблице и на графиках.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsonlint/1.6.0/jsonlint.min.js"></script>
+    <script>
+      try { if (window.jsonlint == null && typeof jsonlint !== 'undefined') { window.jsonlint = jsonlint; } } catch(e) {}
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/json-lint.min.js"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+      (function () {
+        const textarea = document.getElementById('json_input');
+        const badge = document.getElementById('json-badge');
+        const btnSubmit = document.getElementById('btn-submit');
+        const btnFormat = document.getElementById('btn-format');
+        const datasetSelect = document.getElementById('dataset-select');
+        if (!textarea) return;
+        const editor = CodeMirror.fromTextArea(textarea, {
+          mode: { name: 'javascript', json: true },
+          lineNumbers: true,
+          gutters: ['CodeMirror-lint-markers'],
+          lint: true
+        });
+        function setBadge(ok, msg) {
+          if (ok) {
+            badge.classList.remove('bg-danger'); badge.classList.add('bg-success');
+            badge.textContent = msg || 'Проверка: валидный JSON';
+          } else {
+            badge.classList.remove('bg-success'); badge.classList.add('bg-danger');
+            badge.textContent = msg || 'Проверка: ошибка JSON';
+          }
+        }
+        function validate() {
+          try {
+            const val = editor.getValue();
+            JSON.parse(val);
+            setBadge(true);
+            if (btnSubmit) btnSubmit.disabled = false;
+            return true;
+          } catch (e) {
+            setBadge(false, 'Ошибка: ' + (e && e.message ? e.message : 'некорректный JSON'));
+            if (btnSubmit) btnSubmit.disabled = true;
+            return false;
+          }
+        }
+        editor.on('change', validate);
+        setTimeout(validate, 0);
+        if (btnFormat) {
+          btnFormat.addEventListener('click', function () {
+            try {
+              const obj = JSON.parse(editor.getValue());
+              editor.setValue(JSON.stringify(obj, null, 2));
+              setBadge(true);
+            } catch (e) {
+              setBadge(false, 'Ошибка: ' + (e && e.message ? e.message : 'некорректный JSON'));
+            }
+          });
+        }
+        if (datasetSelect) {
+          datasetSelect.addEventListener('change', async function () {
+            const name = datasetSelect.value;
+            if (!name) return;
+            try {
+              const resp = await fetch(`/data/get/${encodeURIComponent(name)}`);
+              const data = await resp.json();
+              if (!resp.ok) {
+                setBadge(false, data && data.error ? data.error : 'не удалось загрузить набор');
+                return;
+              }
+              editor.setValue(JSON.stringify(data, null, 2));
+              setBadge(true);
+            } catch (e) {
+              setBadge(false, 'ошибка загрузки набора');
+            }
+          });
+        }
+        const form = document.getElementById('forecast-form');
+        if (form) {
+          form.addEventListener('submit', function (ev) {
+            if (!validate()) { ev.preventDefault(); ev.stopPropagation(); return false; }
+            editor.save();
+          });
+        }
+      })();
+    </script>
+  </body>
+  </html>
+
+
