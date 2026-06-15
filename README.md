@@ -5,10 +5,11 @@
 
 ### Ключевые возможности
 - Модели: M/M/1, M/M/c (Erlang C), Kingman (G/G/1), G/G/c (Allen–Cunneen).
-- Оценка сервисного времени S и устройств D_i (CPU/RAM/NET) по линейному участку (утилизация vs RPS).
+- Оценка сервисного времени S и устройств D_i (CPU/RAM/IO) по линейному участку (утилизация vs RPS).
 - Прогноз задержек при целевом `target_rps`, проверка SLO по максимальной задержке.
 - Рекомендации по масштабированию: инстансы по CPU/RAM и подбор `c` для M/M/c и G/G/c.
-- Интерактивные графики: latency vs RPS (+линия SLO), CPU/RAM utilization vs RPS, Network (MB/s) vs RPS, Instances vs RPS.
+- Последовательный ввод ступеней через форму и сохранение наборов данных в `data/`.
+- Интерактивные графики: latency vs RPS (+линия SLO), CPU/RAM utilization vs RPS, Instances vs RPS.
 - Экспорт PDF отчёта (опционально через WeasyPrint).
 - REST API (`POST /api/forecast`) и OpenAPI (`GET /openapi.json`).
 
@@ -32,7 +33,7 @@ python app.py
 ```
 4) Откройте браузер: `http://127.0.0.1:8000`
 
-5) На главной странице вставьте JSON (пример: `data/sample.json`), задайте `target_rps` и нажмите «Рассчитать прогноз».
+5) На главной странице заполните параметры прогноза и ступени нагрузочного теста либо загрузите сохранённый набор данных, затем нажмите «Рассчитать прогноз».
 
 Примечание (PDF на macOS): для WeasyPrint могут понадобиться системные библиотеки (Pango, Cairo). На macOS можно установить через `brew install pango cairo`. Если не требуется PDF, WeasyPrint можно пропустить.
 
@@ -65,9 +66,9 @@ docker run --rm -p 8000:8000 -e PORT=8000 forecast-svc
 - `services/schemas.py` — Pydantic‑схемы входа/выхода (InputSchema, ForecastOutput и т.д.).
 - `services/models.py` — функции моделей (M/M/1, M/M/c, Kingman (G/G/1), G/G/c).
 - `services/forecast.py` — логика валидации, регрессий и прогноза (Kingman, G/G/c)
-- `templates/index.html` — главная страница с формой, выбором датасета и подсказками.
+- `templates/index.html` — главная страница с пошаговой формой, выбором/сохранением датасета и подсказками.
 - `templates/results.html` — отчёт с таблицами и графиками.
-- `static/js/app.js` — графики Plotly, редактор/валидация JSON (CodeMirror + JSONLint).
+- `static/js/app.js` — динамическая форма ступеней, сохранение датасетов и графики Plotly.
 - `static/css/style.css` — пользовательские стили.
 - `data/sample.json` — пример входного JSON.
 - `tests/test_models.py` — базовые тесты моделей/прогноза.
@@ -99,11 +100,7 @@ docker run --rm -p 8000:8000 -e PORT=8000 forecast-svc
 - Линии CPU и RAM — прогноз утилизаций `U_i = X · D_i`.  
 - Горизонтальные пороги `u_max_cpu`/`u_max_ram` показывают границы, где потребуется масштабирование.
 
-5) График «Сеть (MB/s) vs RPS»  
-- Линии `net_in_mbps`/`net_out_mbps`; при заданных лимитах — горизонтальные `cap_in`/`cap_out`.  
-- Используйте для выявления сетевых «узких мест» (bottlenecks) и возможного троттлинга.
-
-6) График «Инстансы vs RPS»  
+5) График «Инстансы vs RPS»  
 - Ступенчатые линии показывают необходимое количество инстансов по CPU и RAM.  
 - Изломы соответствуют событиям масштабирования (увеличение числа инстансов).
 
@@ -126,8 +123,6 @@ Kubernetes-поля (см. `data/sample.json`):
       "mem_workingset_mib": 2380,
       "mem_request_mib_per_pod": 1290,
       "mem_limit_mib_per_pod": 1400,
-      "net_in_mbps": 12.4,
-      "net_out_mbps": 8.7,
       "concurrency_optional": 33,
       "errors_pct": 0.0
     }
@@ -140,8 +135,6 @@ Kubernetes-поля (см. `data/sample.json`):
   "capacity": {
     "u_max_cpu": 0.7,
     "u_max_ram": 0.7,
-    "net_capacity_in_mbps_optional": 200,
-    "net_capacity_out_mbps_optional": 200,
     "mmc_c_optional": 4
   },
   "modeling": {

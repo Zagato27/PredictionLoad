@@ -12,8 +12,6 @@
       "mem_workingset_mib": 770,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 0.45,
-      "net_out_mbps": 1.8,
       "errors_pct": 0.0
     },
     {
@@ -28,8 +26,6 @@
       "mem_workingset_mib": 789,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 0.7,
-      "net_out_mbps": 2.3,
       "errors_pct": 0.0
     },
     {
@@ -44,8 +40,6 @@
       "mem_workingset_mib": 792,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 0.86,
-      "net_out_mbps": 2.8,
       "errors_pct": 0.0
     },
     {
@@ -60,8 +54,6 @@
       "mem_workingset_mib": 803,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 1.0,
-      "net_out_mbps": 3.2,
       "errors_pct": 0.0
     },
     {
@@ -76,8 +68,6 @@
       "mem_workingset_mib": 810,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 1.2,
-      "net_out_mbps": 4.0,
       "errors_pct": 0.0
     },
     {
@@ -92,8 +82,6 @@
       "mem_workingset_mib": 824,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 1.4,
-      "net_out_mbps": 4.5,
       "errors_pct": 0.0
     },
     {
@@ -108,8 +96,6 @@
       "mem_workingset_mib": 1290,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 0.8,
-      "net_out_mbps": 4.0,
       "errors_pct": 0.0
     },
     {
@@ -124,8 +110,6 @@
       "mem_workingset_mib": 1320,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 1.6,
-      "net_out_mbps": 5.0,
       "errors_pct": 0.0
     },
     {
@@ -140,8 +124,6 @@
       "mem_workingset_mib": 1320,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 1.7,
-      "net_out_mbps": 5.2,
       "errors_pct": 0.0
     },
     {
@@ -156,8 +138,6 @@
       "mem_workingset_mib": 1320,
       "mem_request_mib_per_pod": 350,
       "mem_limit_mib_per_pod": 700,
-      "net_in_mbps": 1.9,
-      "net_out_mbps": 5.6,
       "errors_pct": 0.0
     }
   ],
@@ -168,15 +148,12 @@
   "capacity": {
     "u_max_cpu": 0.8,
     "u_max_ram": 0.8,
-    "net_capacity_in_mbps_optional": 100,
-    "net_capacity_out_mbps_optional": 100,
     "mmc_c_optional": 2
   },
   "modeling": {
     "use_m_m_1": true,
     "use_m_m_c": true,
     "use_kingman": true,
-    "use_usl": false,
     "use_g_g_c": true
   }
 }

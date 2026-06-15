@@ -1,6 +1,5 @@
 import math
-from functools import lru_cache
-from typing import Callable, Tuple
+from typing import Tuple
 
 
 def safe_rho(X: float, S_s: float) -> float:
@@ -62,42 +61,5 @@ def mmc_response_time_ms(S_ms: float, X: float, c: int) -> Tuple[float, float]:
     Wq_s = Pw / denom
     R_s = Wq_s + (1.0 / mu)
     return R_s * 1000.0, Pw
-
-
-def usl_throughput(N: float, alpha: float, beta: float, X1: float) -> float:
-    """
-    Universal Scalability Law throughput X(N).
-    X(N) = X1 * N / (1 + alpha*(N-1) + beta*N*(N-1))
-    """
-    denom = 1.0 + alpha * (N - 1.0) + beta * N * (N - 1.0)
-    if denom <= 0:
-        return float("nan")
-    return X1 * (N / denom)
-
-
-def invert_usl_for_throughput(
-    X_target: float, alpha: float, beta: float, X1: float, N_max: float = 1e6
-) -> float:
-    """
-    Find N such that usl_throughput(N) ~= X_target via bisection.
-    """
-    if X_target <= 0:
-        return 0.0
-    # Coarse bounds
-    lo, hi = 1.0, max(2.0, min(N_max, X_target * 10.0))
-    for _ in range(80):
-        mid = 0.5 * (lo + hi)
-        xm = usl_throughput(mid, alpha, beta, X1)
-        if math.isnan(xm):
-            hi = mid
-            continue
-        if xm < X_target:
-            lo = mid
-        else:
-            hi = mid
-        if abs(hi - lo) < 1e-6:
-            break
-    return 0.5 * (lo + hi)
-
 
 

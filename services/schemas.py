@@ -16,18 +16,17 @@ util_float = confloat(ge=0, le=1)  # type: ignore
 
 
 class Step(BaseModel):
-    # step может быть строкой или числом
+    # step can be either a human-readable label or an ordinal number.
     step: Union[str, conint(ge=1)]  # type: ignore
     rps: positive_float  # type: ignore
     avg_ms: positive_float  # type: ignore
     max_ms: confloat(ge=0)  # type: ignore
     errors_pct: non_negative_float  # type: ignore
-    # Старые доли (обратная совместимость) — опционально:
+    # Legacy utilization ratios, kept for API compatibility.
     cpu_util: Optional[util_float] = None  # type: ignore
     ram_util: Optional[util_float] = None  # type: ignore
     io_util: Optional[util_float] = None  # type: ignore
-    net_util: Optional[util_float] = None  # type: ignore
-    # Новые K8s метрики:
+    # Kubernetes metrics.
     pods: Optional[conint(ge=1)] = None  # type: ignore
     cpu_usage_m: Optional[non_negative_float] = None  # type: ignore
     cpu_request_m_per_pod: Optional[non_negative_float] = None  # type: ignore
@@ -35,8 +34,6 @@ class Step(BaseModel):
     mem_workingset_mib: Optional[non_negative_float] = None  # type: ignore
     mem_request_mib_per_pod: Optional[non_negative_float] = None  # type: ignore
     mem_limit_mib_per_pod: Optional[non_negative_float] = None  # type: ignore
-    net_in_mbps: Optional[non_negative_float] = None  # type: ignore
-    net_out_mbps: Optional[non_negative_float] = None  # type: ignore
     concurrency_optional: Optional[conint(ge=0)] = None  # type: ignore
 
     @validator("max_ms")
@@ -56,9 +53,6 @@ class Capacity(BaseModel):
     u_max_cpu: util_float  # type: ignore
     u_max_ram: util_float  # type: ignore
     u_max_io_optional: Optional[util_float] = None  # type: ignore
-    u_max_net_optional: Optional[util_float] = None  # type: ignore
-    net_capacity_in_mbps_optional: Optional[positive_float] = None  # type: ignore
-    net_capacity_out_mbps_optional: Optional[positive_float] = None  # type: ignore
     mmc_c_optional: Optional[conint(ge=1)] = None  # type: ignore
 
 
@@ -66,7 +60,6 @@ class ModelingFlags(BaseModel):
     use_m_m_1: bool = True
     use_m_m_c: bool = True
     use_kingman: bool = True
-    use_usl: bool = False
     use_g_g_c: bool = True
 
 
@@ -98,19 +91,16 @@ class LatencyPair(BaseModel):
 
 
 class TargetsLatency(BaseModel):
-    m_m_1: LatencyPair
-    m_m_c: LatencyPair
-    kingman: LatencyPair
-    g_g_c: LatencyPair
+    m_m_1: Optional[LatencyPair] = None
+    m_m_c: Optional[LatencyPair] = None
+    kingman: Optional[LatencyPair] = None
+    g_g_c: Optional[LatencyPair] = None
 
 
 class TargetsUtil(BaseModel):
     cpu: float
     ram: float
     io: float
-    net: float
-    net_in_util_optional: Optional[float] = None
-    net_out_util_optional: Optional[float] = None
 
 
 class TargetsInstances(BaseModel):
@@ -124,12 +114,6 @@ class TargetsOut(BaseModel):
     latency_ms: TargetsLatency
     utilization: TargetsUtil
     instances: TargetsInstances
-
-
-class USLParams(BaseModel):
-    alpha: float
-    beta: float
-    X1: float
 
 
 class Variability(BaseModel):
@@ -168,9 +152,6 @@ class SeriesUtilPoint(BaseModel):
     cpu: Optional[float] = None
     ram: Optional[float] = None
     io: Optional[float] = None
-    net: Optional[float] = None
-    net_in_util: Optional[float] = None
-    net_out_util: Optional[float] = None
 
 
 class SeriesInstancesPoint(BaseModel):
@@ -178,32 +159,42 @@ class SeriesInstancesPoint(BaseModel):
     instances_cpu: Optional[int] = None
     instances_ram: Optional[int] = None
     instances_io: Optional[int] = None
-    instances_net: Optional[int] = None
-
-
-class SeriesNetworkPoint(BaseModel):
-    rps: float
-    net_in_mbps: Optional[float] = None
-    net_out_mbps: Optional[float] = None
-    cap_in_mbps: Optional[float] = None
-    cap_out_mbps: Optional[float] = None
-    in_exceeds: Optional[bool] = None
-    out_exceeds: Optional[bool] = None
 
 
 class SeriesOut(BaseModel):
     latency_vs_rps: List[SeriesLatencyPoint]
     util_vs_rps: List[SeriesUtilPoint]
     instances_vs_rps: List[SeriesInstancesPoint]
-    net_vs_rps: Optional[List[SeriesNetworkPoint]] = None
+
+
+class ForecastMeta(BaseModel):
+    summary: str
+    slo_ms_max_optional: str = ""
+    u_max_ram: str
+    u_max_cpu: str
+    observed_steps: int
+    used_steps: int
+    excluded_steps: int
+    linear_steps: str
+    max_observed_rps: float
+    target_over_observed_ratio: float
+    bottleneck: str
+    bottleneck_pressure: float
+    recommended_replicas: int
+    primary_model: str
+    primary_avg_ms: Optional[float] = None
+    primary_max_ms: Optional[float] = None
+    slo_status: str
+    slo_margin_ms: Optional[float] = None
+    cpu_headroom_pct: float
+    ram_headroom_pct: float
+    quality_warnings: List[str] = Field(default_factory=list)
 
 
 class ForecastOutput(BaseModel):
     targets: TargetsOut
     models: ModelsOut
     series: SeriesOut
-    # optional meta summary for UI text
-    meta: Dict[str, str] = {}
-    network: Optional[Dict[str, float]] = None
+    meta: ForecastMeta
 
 

@@ -48,9 +48,9 @@ class TestModels(unittest.TestCase):
         # Series include RAM
         self.assertIn("ram", res["series"]["util_vs_rps"][0])
         self.assertIn("instances_ram", res["series"]["instances_vs_rps"][0])
-        # Network predictions present
-        self.assertIn("network", res)
-        self.assertIn("net_vs_rps", res["series"])
+        # Network predictions are intentionally not part of the forecast contract.
+        self.assertNotIn("network", res)
+        self.assertNotIn("net_vs_rps", res["series"])
 
 
 if __name__ == "__main__":

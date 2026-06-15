@@ -9,291 +9,234 @@
     <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
     <script>
       window.FORECAST_DATA = {{ result_json|tojson }};
-    </script>
-    <script>
       window.PAGE_META = {
         now: "{{ now }}",
         target_rps: {{ target_rps|tojson }}
       };
     </script>
-    <script>
-      // MathJax for formulas
-      window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] } };
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
   </head>
   <body>
+    {% set t = result_json.targets %}
+    {% set meta = result_json.meta %}
+    {% set inst = t.instances %}
+    {% set util = t.utilization %}
+    {% set lat = t.latency_ms %}
+    {% set slo_num = (meta.slo_ms_max_optional|int) if meta.slo_ms_max_optional else None %}
+    {% set status_title = 'SLO пройдёт' if meta.slo_status == 'ok' else ('Риск SLO' if meta.slo_status == 'risk' else 'SLO не задан') %}
+    {% set status_class = 'success' if meta.slo_status == 'ok' else ('danger' if meta.slo_status == 'risk' else 'secondary') %}
+    {% set margin_text = 'n/a' if meta.slo_margin_ms is none else ('%+.1f мс'|format(meta.slo_margin_ms)) %}
+
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
       <div class="container d-flex justify-content-between align-items-center">
         <a class="navbar-brand m-0" href="/">LoadPredict</a>
-        <div class="d-flex align-items-center"></div>
       </div>
     </nav>
+
     <main class="container my-4">
-      <h2 class="mb-3">Итоговый отчёт</h2>
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+          <h2 class="mb-1">Итоговый прогноз</h2>
+          <div class="text-muted">Target RPS {{ t.rps|int }} · основная модель {{ meta.primary_model }} · {{ now }}</div>
+        </div>
+        <span class="badge text-bg-{{ status_class }} fs-6">{{ status_title }}</span>
+      </div>
 
-      <p class="lead">{{ result_json.meta.summary }}</p>
-
-      <div class="row g-3">
-        <div class="col-12">
-          <div class="card border-success">
-            <div class="card-header d-flex justify-content-between align-items-center">
-              <span>Рекомендации</span>
-              <span class="badge bg-success">❕</span>
-            </div>
+      <div class="row g-3 mb-3">
+        <div class="col-md-3">
+          <div class="card border-{{ status_class }} h-100">
             <div class="card-body">
-              {% set t = result_json.targets %}
-              {% set inst = t.instances %}
-              {% set util = t.utilization %}
-              {% set mmc_lat = t.latency_ms.m_m_c %}
-              {% set slo_str = result_json.meta.slo_ms_max_optional %}
-              {% set slo_num = (slo_str|int) if slo_str else None %}
-              {% set bottle = 'RAM' if inst.ram_based >= inst.cpu_based else 'CPU' %}
-              {% set net = result_json.network if result_json.network else {} %}
-              {% set net_in = net.get('net_in_mbps_target') %}
-              {% set net_out = net.get('net_out_mbps_target') %}
-              {% set cap_in = net.get('cap_in_mbps') %}
-              {% set cap_out = net.get('cap_out_mbps') %}
-              <ul class="mb-3">
-                <li>
-                  <b>Масштабирование</b>: увеличить число реплик до <b>{{ inst.suggested_m }}</b>
-                  (CPU‑based: {{ inst.cpu_based }}, RAM‑based: {{ inst.ram_based }}; ограничивающий ресурс — <b>{{ bottle }}</b>).
-                </li>
-                <li>
-                  <b>SLO и задержки</b>:
-                  средняя по M/M/c ~ <b>{{ '%.1f'|format(mmc_lat.avg) }} мс</b>,
-                  максимум ~ <b>{{ '%.1f'|format(mmc_lat.max) }} мс</b>
-                  {% if slo_num %}
-                    — SLO {{ slo_num }} мс
-                    {% if mmc_lat.max <= slo_num %}
-                      <span class="badge bg-success">OK</span>
-                    {% else %}
-                      <span class="badge bg-danger">Риск</span>
-                    {% endif %}
-                  {% endif %}
-                </li>
-                <li>
-                  <b>Ресурсы при RPS={{ t.rps|int }}</b>:
-                  CPU ~ {{ '%.2f'|format(util.cpu) }} (u_max {{ result_json.meta.u_max_cpu }}),
-                  RAM ~ {{ '%.2f'|format(util.ram) }} (u_max {{ result_json.meta.u_max_ram }}).
-                  Рекомендуемое действие — масштабировать до <b>{{ inst.suggested_m }}</b> реплик (или пересмотреть per‑pod requests/limits).
-                </li>
-                <li>
-                  <b>Сеть</b>:
-                  in ≈ {{ '%.1f'|format(net_in or 0) }} MB/s, out ≈ {{ '%.1f'|format(net_out or 0) }} MB/s
-                  при доступной полосе in {{ cap_in or 0 }} / out {{ cap_out or 0 }} MB/s —
-                  {% if cap_in and net_in and net_in > cap_in or cap_out and net_out and net_out > cap_out %}
-                    <span class="badge bg-warning text-dark">Внимание: близко/выше capacity</span>
-                  {% else %}
-                    <span class="badge bg-secondary">Ограничений не ожидается</span>
-                  {% endif %}
-                </li>
-              </ul>
-              <div class="small text-muted">
-                <b>Что сделать</b>:
-                <ol class="mb-0">
-                  <li>Установить целевое число реплик <b>{{ inst.suggested_m }}</b> (ориентир на {{ bottle }}).</li>
-                  <li>Проверить HPA/requests/limits: CPU ~ {{ '%.0f'|format(result_json.models.kube.cpu_request_m_per_pod or 0) }}m / {{ '%.0f'|format(result_json.models.kube.cpu_limit_m_per_pod or 0) }}m; RAM ~ {{ '%.0f'|format(result_json.models.kube.mem_request_mib_per_pod or 0) }} / {{ '%.0f'|format(result_json.models.kube.mem_limit_mib_per_pod or 0) }} MiB.</li>
-                  <li>Подтвердить SLO после масштабирования; при отклонениях — поднять <i>c</i> в M/M/c или оптимизировать сервисное время.</li>
-                </ol>
+              <div class="text-muted small">Статус SLO</div>
+              <div class="fs-4 fw-semibold">{{ status_title }}</div>
+              <div class="small">Запас: {{ margin_text }}{% if slo_num %} к SLO {{ slo_num }} мс{% endif %}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="text-muted small">Рекомендуемые реплики</div>
+              <div class="fs-4 fw-semibold">{{ meta.recommended_replicas }}</div>
+              <div class="small">CPU {{ inst.cpu_based }} · RAM {{ inst.ram_based }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="text-muted small">Ограничивающий ресурс</div>
+              <div class="fs-4 fw-semibold">{{ meta.bottleneck }}</div>
+              <div class="small">Давление {{ '%.0f'|format(meta.bottleneck_pressure * 100) }}% от порога</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="text-muted small">Основная задержка</div>
+              <div class="fs-4 fw-semibold">
+                {% if meta.primary_max_ms is not none %}{{ '%.1f'|format(meta.primary_max_ms) }} мс{% else %}n/a{% endif %}
+              </div>
+              <div class="small">
+                avg {% if meta.primary_avg_ms is not none %}{{ '%.1f'|format(meta.primary_avg_ms) }} мс{% else %}n/a{% endif %}
               </div>
             </div>
           </div>
         </div>
-        <div class="col-lg-6">
+      </div>
+
+      <div class="row g-3">
+        <div class="col-lg-7">
+          <div class="card border-{{ status_class }}">
+            <div class="card-header">Что сделать</div>
+            <div class="card-body">
+              <ol class="mb-0">
+                <li>Установить целевое число реплик <b>{{ meta.recommended_replicas }}</b>.</li>
+                <li>Проверить HPA и requests/limits: CPU {{ '%.0f'|format(result_json.models.kube.cpu_request_m_per_pod or 0) }}m / {{ '%.0f'|format(result_json.models.kube.cpu_limit_m_per_pod or 0) }}m; RAM {{ '%.0f'|format(result_json.models.kube.mem_request_mib_per_pod or 0) }} / {{ '%.0f'|format(result_json.models.kube.mem_limit_mib_per_pod or 0) }} MiB.</li>
+                {% if meta.slo_status == 'risk' %}
+                <li>После масштабирования проверить SLO; если риск остаётся, увеличить <i>c</i> или снижать сервисное время S.</li>
+                {% else %}
+                <li>Подтвердить результат контрольным нагрузочным прогоном на target RPS.</li>
+                {% endif %}
+              </ol>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-5">
           <div class="card">
-            <div class="card-header">Модели и прогнозы (мс)</div>
+            <div class="card-header">Качество прогноза</div>
+            <div class="card-body">
+              <div class="row g-2 mb-3">
+                <div class="col-6"><span class="text-muted small">Ступеней</span><br><b>{{ meta.used_steps }}/{{ meta.observed_steps }}</b></div>
+                <div class="col-6"><span class="text-muted small">Линейный участок</span><br><b>{{ meta.linear_steps }}</b></div>
+                <div class="col-6"><span class="text-muted small">Target / max observed</span><br><b>{{ '%.2f'|format(meta.target_over_observed_ratio) }}x</b></div>
+                <div class="col-6"><span class="text-muted small">S</span><br><b>{{ '%.1f'|format(result_json.models.service_time_ms) }} мс</b></div>
+              </div>
+              <ul class="small mb-0">
+                {% for warning in meta.quality_warnings %}
+                <li>{{ warning }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-lg-7">
+          <div class="card">
+            <div class="card-header">Основные модели для Kubernetes</div>
             <div class="card-body">
               <div class="table-responsive">
                 <table class="table table-striped table-sm align-middle">
                   <thead>
                     <tr>
                       <th>Модель</th>
-                      <th>Средняя задержка (мс)</th>
-                      <th>Максимальная (мс)</th>
-                      <th>Рекомендация</th>
+                      <th>Avg, мс</th>
+                      <th>Max, мс</th>
+                      <th>Вывод</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {% set lat = result_json.targets.latency_ms %}
-                    {% set slo_str = result_json.meta.slo_ms_max_optional %}
-                    {% set slo_num = (slo_str|int) if slo_str else None %}
                     <tr>
-                      <td>M/M/1</td>
-                      <td>{% if (lat.m_m_1.avg|string) == 'inf' %}∞ (ρ≥1, нестабильно){% else %}{{ '%.1f'|format(lat.m_m_1.avg) }}{% endif %}</td>
-                      <td>{% if (lat.m_m_1.max|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.m_m_1.max) }}{% endif %}</td>
-                      <td>
-                        {% set mm1_inf = (lat.m_m_1.avg|string) == 'inf' or (lat.m_m_1.max|string) == 'inf' %}
-                        {% if mm1_inf %}
-                          <span class="badge bg-danger">Нестабильно</span> — увеличьте число реплик
-                        {% elif slo_num and (lat.m_m_1.max > slo_num) %}
-                          <span class="badge bg-warning text-dark">Риск SLO</span> — добавьте реплики/оптимизируйте
-                        {% else %}
-                          <span class="badge bg-success">OK</span> — одна реплика справится
-                        {% endif %}
-                      </td>
+                      <td>G/G/c <span class="badge bg-primary">основная</span></td>
+                      {% if lat.g_g_c %}
+                      {% set ggc_inf = (lat.g_g_c.avg|string) == 'inf' or (lat.g_g_c.max|string) == 'inf' %}
+                      <td>{% if ggc_inf %}∞{% else %}{{ '%.1f'|format(lat.g_g_c.avg) }}{% endif %}</td>
+                      <td>{% if ggc_inf %}∞{% else %}{{ '%.1f'|format(lat.g_g_c.max) }}{% endif %}</td>
+                      <td>{% if ggc_inf %}<span class="badge bg-danger">Нестабильно</span>{% elif not slo_num or lat.g_g_c.max <= slo_num %}<span class="badge bg-success">Стабильно</span>{% else %}<span class="badge bg-warning text-dark">Риск SLO</span>{% endif %} · учитывает вариативность</td>
+                      {% else %}
+                      <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
+                      {% endif %}
                     </tr>
                     <tr>
-                      <td>M/M/c</td>
-                      <td>{{ '%.1f'|format(lat.m_m_c.avg) }}</td>
-                      <td>{{ '%.1f'|format(lat.m_m_c.max) }}</td>
-                      <td>
-                        {% if (not slo_num) or (lat.m_m_c.max <= slo_num) %}
-                          <span class="badge bg-success">Стабильно</span> — при c={{ result_json.models.mmc.c }}{% if slo_num %}, SLO OK{% endif %}
-                        {% else %}
-                          <span class="badge bg-warning text-dark">Внимание</span> — увеличьте c (сейчас c={{ result_json.models.mmc.c }})
-                        {% endif %}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Кингман (G/G/1)</td>
-                      <td>{% if (lat.kingman.avg|string) == 'inf' %}∞ (ρ≥1, нестабильно){% else %}{{ '%.1f'|format(lat.kingman.avg) }}{% endif %}</td>
-                      <td>{% if (lat.kingman.max|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.kingman.max) }}{% endif %}</td>
-                      <td>
-                        {% set kg_inf = (lat.kingman.avg|string) == 'inf' or (lat.kingman.max|string) == 'inf' %}
-                        {% if kg_inf %}
-                          <span class="badge bg-danger">Нестабильно</span> — увеличьте число реплик
-                        {% else %}
-                          <span class="badge bg-secondary">Возможны очереди</span> — держите запас по репликам
-                        {% endif %}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>G/G/c (Allen–Cunneen)</td>
-                      <td>{{ '%.1f'|format(lat.g_g_c.avg) }}</td>
-                      <td>{{ '%.1f'|format(lat.g_g_c.max) }}</td>
-                      <td>
-                        {% if (not slo_num) or (lat.g_g_c.max <= slo_num) %}
-                          <span class="badge bg-success">Стабильно</span> — при c={{ result_json.models.mmc.c }}, с учётом вариативности (Ca/Cs)
-                        {% else %}
-                          <span class="badge bg-warning text-dark">Внимание</span> — увеличьте c (сейчас c={{ result_json.models.mmc.c }}), вариативность повышает ожидание
-                        {% endif %}
-                      </td>
+                      <td>M/M/c <span class="badge bg-primary">основная</span></td>
+                      {% if lat.m_m_c %}
+                      {% set mmc_inf = (lat.m_m_c.avg|string) == 'inf' or (lat.m_m_c.max|string) == 'inf' %}
+                      <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.avg) }}{% endif %}</td>
+                      <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.max) }}{% endif %}</td>
+                      <td>{% if mmc_inf %}<span class="badge bg-danger">Нестабильно</span>{% elif not slo_num or lat.m_m_c.max <= slo_num %}<span class="badge bg-success">Стабильно</span>{% else %}<span class="badge bg-warning text-dark">Риск SLO</span>{% endif %} · c={{ result_json.models.mmc.c }}</td>
+                      {% else %}
+                      <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
+                      {% endif %}
                     </tr>
                   </tbody>
                 </table>
               </div>
-              <button class="btn btn-sm btn-outline-secondary mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#models-notes" aria-expanded="false" aria-controls="models-notes">Пояснения</button>
-              <div class="collapse" id="models-notes">
-                <div class="small text-muted mt-2">
-                  <p class="mb-1">Описание:</p>
-                  <ul class="mb-0">
-                    <li><b>Средняя задержка</b> — оценка среднего времени отклика при целевом RPS по выбранной модели.</li>
-                    <li><b>Максимальная</b> — оценка пикового времени: средняя × коэффициент (max/avg базовой ступени).</li>
-                  </ul>
-                </div>
-                <div class="small text-muted mt-3">
-                  <p class="mb-1">Подробнее по моделям:</p>
-                  <ul class="mb-2">
-                    <li><b>M/M/1 (один сервер)</b>: одна очередь и один канал обслуживания; вход — пуассоновский поток, время сервиса — экспоненциальное. Нагрузка <span class="font-monospace">ρ = X·S</span>. <span class="font-monospace">R = S / (1 - ρ)</span> при <span class="font-monospace">ρ &lt; 1</span>; при <span class="font-monospace">ρ ≥ 1</span> — «∞».</li>
-                    <li><b>M/M/c (несколько серверов)</b>: одна очередь и <span class="font-monospace">c</span> параллельных каналов. <span class="font-monospace">R = 1/μ + C(c,a)/(cμ - λ)</span>.</li>
-                    <li><b>G/G/1 (Кингман)</b>: <span class="font-monospace">R ≈ S + (ρ/(1-ρ)) · ((C_a^2 + C_s^2)/2) · S</span> — учитывает вариативность.</li>
-                    <li><b>G/G/c (Allen–Cunneen)</b>: <span class="font-monospace">R ≈ S + ((C_a^2 + C_s^2)/2) · C(c,a)/(cμ - λ)</span> — вариативность при <span class="font-monospace">c</span> каналах.</li>
-                  </ul>
-                  <p class="mb-1">Как читать столбцы:</p>
-                  <ul class="mb-0">
-                    <li><b>Средняя задержка (мс)</b>: прогноз <span class="font-monospace">R</span> для целевого RPS.</li>
-                    <li><b>Максимальная (мс)</b>: <span class="font-monospace">R_max ≈ R_avg × (max/avg)</span> базовой ступени.</li>
-                  </ul>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#diagnostic-models" aria-expanded="false" aria-controls="diagnostic-models">Показать диагностические модели</button>
+              <div class="collapse mt-3" id="diagnostic-models">
+                <div class="table-responsive">
+                  <table class="table table-striped table-sm align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Модель</th>
+                        <th>Avg, мс</th>
+                        <th>Max, мс</th>
+                        <th>Зачем смотреть</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>M/M/1</td>
+                        {% if lat.m_m_1 %}
+                        <td>{% if (lat.m_m_1.avg|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.m_m_1.avg) }}{% endif %}</td>
+                        <td>{% if (lat.m_m_1.max|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.m_m_1.max) }}{% endif %}</td>
+                        <td>Baseline для одной реплики.</td>
+                        {% else %}
+                        <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
+                        {% endif %}
+                      </tr>
+                      <tr>
+                        <td>Kingman G/G/1</td>
+                        {% if lat.kingman %}
+                        <td>{% if (lat.kingman.avg|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.kingman.avg) }}{% endif %}</td>
+                        <td>{% if (lat.kingman.max|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.kingman.max) }}{% endif %}</td>
+                        <td>Показывает влияние вариативности на один канал.</td>
+                        {% else %}
+                        <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
+                        {% endif %}
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
           </div>
         </div>
-        <div class="col-lg-6">
-          <div class="card">
-            <div class="card-header">Параметры и оценки</div>
-            <div class="card-body">
-              <div class="table-responsive">
-                <table class="table table-striped table-sm align-middle">
-                  <thead>
-                    <tr>
-                      <th>Параметр</th>
-                      <th>Значение</th>
-                      <th>Описание</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>S (мс)</td>
-                      <td>{{ '%.1f'|format(result_json.models.service_time_ms) }}</td>
-                      <td>Базовое сервисное время</td>
-                    </tr>
-                    <tr>
-                      <td>Ca</td>
-                      <td>{{ '%.2f'|format(result_json.models.variability.Ca) }}</td>
-                      <td>Вариативность входа</td>
-                    </tr>
-                    <tr>
-                      <td>Cs</td>
-                      <td>{{ '%.2f'|format(result_json.models.variability.Cs) }}</td>
-                      <td>Вариативность сервиса</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <button class="btn btn-sm btn-outline-secondary mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#params-notes" aria-expanded="false" aria-controls="params-notes">Пояснения</button>
-              <div class="collapse" id="params-notes">
-                <div class="small text-muted mt-2">
-                  <p class="mb-1">Пояснения:</p>
-                  <ul class="mb-0">
-                    <li><b>S</b> — оценка сервисного времени, аппроксимируется через максимальный из <code>D_i</code> (наклонов утилизаций к RPS).</li>
-                    <li><b>Ca, Cs</b> — коэффициенты вариации для входного потока и сервиса (используются в формуле Кингмана).</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <div class="row g-3 mt-1">
-        <div class="col-12">
+        <div class="col-lg-5">
           <div class="card">
-            <div class="card-header">Ресурсный профиль (Kubernetes)</div>
+            <div class="card-header">Ресурсный профиль</div>
             <div class="card-body">
               <div class="table-responsive">
                 <table class="table table-striped table-sm align-middle">
                   <thead>
                     <tr>
                       <th>Ресурс</th>
-                      <th>Request / под</th>
-                      <th>Limit / под</th>
-                      <th>Прогноз. утилизация (доля)</th>
-                      <th>Требуемые инстансы</th>
+                      <th>Util</th>
+                      <th>u_max</th>
+                      <th>Запас</th>
+                      <th>Инстансы</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
                       <td>CPU</td>
-                      <td>{% if result_json.models.kube and (result_json.models.kube.cpu_request_m_per_pod is not none) %}{{ '%.0f'|format(result_json.models.kube.cpu_request_m_per_pod) }} m{% else %}n/a{% endif %}</td>
-                      <td>{% if result_json.models.kube and (result_json.models.kube.cpu_limit_m_per_pod is not none) %}{{ '%.0f'|format(result_json.models.kube.cpu_limit_m_per_pod) }} m{% else %}n/a{% endif %}</td>
-                      <td>{{ '%.2f'|format(result_json.targets.utilization.cpu) }}</td>
-                      <td>{{ result_json.targets.instances.cpu_based }}</td>
+                      <td>{{ '%.2f'|format(util.cpu) }}</td>
+                      <td>{{ meta.u_max_cpu }}</td>
+                      <td>{{ '%+.0f%%'|format(meta.cpu_headroom_pct) }}</td>
+                      <td>{{ inst.cpu_based }}</td>
                     </tr>
                     <tr>
                       <td>RAM</td>
-                      <td>{% if result_json.models.kube and (result_json.models.kube.mem_request_mib_per_pod is not none) %}{{ '%.0f'|format(result_json.models.kube.mem_request_mib_per_pod) }} MiB{% else %}n/a{% endif %}</td>
-                      <td>{% if result_json.models.kube and (result_json.models.kube.mem_limit_mib_per_pod is not none) %}{{ '%.0f'|format(result_json.models.kube.mem_limit_mib_per_pod) }} MiB{% else %}n/a{% endif %}</td>
-                      <td>{{ '%.2f'|format(result_json.targets.utilization.ram) }}</td>
-                      <td>{{ result_json.targets.instances.ram_based }}</td>
+                      <td>{{ '%.2f'|format(util.ram) }}</td>
+                      <td>{{ meta.u_max_ram }}</td>
+                      <td>{{ '%+.0f%%'|format(meta.ram_headroom_pct) }}</td>
+                      <td>{{ inst.ram_based }}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-              <button class="btn btn-sm btn-outline-secondary mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#kube-notes" aria-expanded="false" aria-controls="kube-notes">Пояснения</button>
-              <div class="collapse" id="kube-notes">
-                <div class="small text-muted mt-2">
-                  <ul class="mb-0">
-                    <li>Пороговые утилизации: CPU {{ result_json.meta.u_max_cpu }}; RAM {{ result_json.meta.u_max_ram }}.</li>
-                    {% if result_json.network.cap_in_mbps or result_json.network.cap_out_mbps %}
-                    <li>Сеть: допустимые полосы — in {{ result_json.network.cap_in_mbps or 0 }} MB/s, out {{ result_json.network.cap_out_mbps or 0 }} MB/s.</li>
-                    {% else %}
-                    <li>Сеть: нет нормировки по полосе (capacities не заданы).</li>
-                    {% endif %}
-                  </ul>
-                </div>
-              </div>
+              <div class="small text-muted">Отрицательный запас означает превышение выбранного порога утилизации.</div>
             </div>
           </div>
         </div>
@@ -302,68 +245,62 @@
       <div class="row g-3 mt-1">
         <div class="col-12">
           <div class="card">
-            <div class="card-header">Задержка vs RPS</div>
+            <div class="card-header">Пройдём ли SLO?</div>
             <div class="card-body">
-              <div id="chart-latency" style="height:420px;" aria-label="График зависимости задержки от RPS: наблюдения и прогнозы моделей, аннотации SLO и точка насыщения USL."></div>
-              <div class="small text-muted mt-2">
-                <ul class="mb-0">
-                  <li><b>Точки Observed</b> — фактические средние/максимальные задержки на ступенях теста.</li>
-                  <li><b>Линии M/M/1, M/M/c, G/G/1, G/G/c</b> — модельные прогнозы средних задержек при различных RPS.</li>
-                  <li><b>Вертикальная пунктирная</b> — целевой RPS.</li>
-                  <li><b>Горизонтальная SLO</b> — порог для максимальной задержки (если задан), используйте hover для значений.</li>
-                </ul>
-              </div>
+              <div id="chart-latency" style="height:420px;" aria-label="График зависимости задержки от RPS."></div>
+              <div class="small text-muted mt-2">Показывает основной прогноз максимальной задержки, фактические пики, SLO и точку, где начинается риск.</div>
             </div>
           </div>
         </div>
         <div class="col-12">
           <div class="card">
-            <div class="card-header">CPU/RAM утилизация vs RPS</div>
+            <div class="card-header">Где закончится ресурсный запас?</div>
             <div class="card-body">
-              <div id="chart-util" style="height:360px;" aria-label="График утилизации CPU и RAM по мере роста RPS с порогами u_max."></div>
-              <div class="small text-muted mt-2">
-                <ul class="mb-0">
-                  <li><b>CPU/RAM</b> — прогноз утилизаций по <code>U = X · D</code>, где <code>D</code> оценено регрессией.</li>
-                  <li>Контролируйте пороги <b>u_max</b> из настроек емкости: превышение означает необходимость масштабирования.</li>
-                </ul>
-              </div>
+              <div id="chart-util" style="height:360px;" aria-label="График утилизации CPU и RAM по мере роста RPS."></div>
+              <div class="small text-muted mt-2">Положительный запас означает, что ресурс ниже порога; отрицательный запас означает превышение u_max.</div>
             </div>
           </div>
         </div>
         <div class="col-12">
           <div class="card">
-            <div class="card-header">Сеть (MB/s) vs RPS</div>
+            <div class="card-header">Сколько реплик понадобится?</div>
             <div class="card-body">
-              <div id="chart-net" style="height:360px;" aria-label="График прогноза входящего/исходящего трафика в MB/s с линиями доступной полосы."></div>
-              <div class="small text-muted mt-2">
-                <ul class="mb-0">
-                  <li><b>Net In/Out</b> — линейная экстраполяция MB/s по RPS.</li>
-                  <li><b>cap_in/cap_out</b> — горизонтальные линии доступной полосы; превышение = узкое место сети.</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="col-12">
-          <div class="card">
-            <div class="card-header">Инстансы vs RPS</div>
-            <div class="card-body">
-              <div id="chart-instances" style="height:360px;" aria-label="Ступенчатый график количества инстансов по ресурсам для поддержания порогов утилизации."></div>
-              <div class="small text-muted mt-2">
-                <ul class="mb-0">
-                  <li><b>Instances_CPU/RAM/IO/NET</b> — требуемое количество инстансов при заданных <code>u_max</code> (округление вверх).</li>
-                  <li>Резкие скачки — моменты масштабирования. Наведите курсор для просмотра значений.</li>
-                </ul>
-              </div>
+              <div id="chart-instances" style="height:360px;" aria-label="Ступенчатый график количества инстансов."></div>
+              <div class="small text-muted mt-2">Ступеньки показывают дискретное масштабирование; линия рекомендации выделяет целевое число реплик.</div>
             </div>
           </div>
         </div>
       </div>
+
+      <div class="card mt-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Инженерные графики</span>
+          <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#engineering-charts" aria-expanded="false" aria-controls="engineering-charts">Показать</button>
+        </div>
+        <div class="collapse" id="engineering-charts">
+          <div class="card-body">
+            <div class="mb-3">
+              <h6>Все latency-модели</h6>
+              <div id="chart-engineering-latency" style="height:420px;" aria-label="Инженерный график всех latency-моделей."></div>
+            </div>
+            <div class="mb-3">
+              <h6>Утилизация CPU/RAM</h6>
+              <div id="chart-engineering-util" style="height:360px;" aria-label="Инженерный график утилизации CPU и RAM."></div>
+            </div>
+            <div>
+              <h6>Инстансы по ресурсам</h6>
+              <div id="chart-engineering-instances" style="height:360px;" aria-label="Инженерный график инстансов по ресурсам."></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="d-flex mt-3">
         <a class="btn btn-outline-secondary" href="/" role="button">Новый расчёт</a>
         <button class="btn btn-outline-primary ms-2" id="btn-export-json">Экспорт JSON</button>
       </div>
     </main>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
     <script>
@@ -382,6 +319,4 @@
       });
     </script>
   </body>
-  </html>
-
-
+</html>

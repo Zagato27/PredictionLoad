@@ -18,8 +18,8 @@ from flask import (
 )
 
 from api import api_bp
-from services.schemas import InputSchema, ForecastOutput
-from services.forecast import compute_forecast
+from services.runner import dump_forecast, run_forecast, validate_input
+from services.schemas import ForecastOutput, InputSchema
 
 
 def create_app() -> Flask:
@@ -108,32 +108,19 @@ def create_app() -> Flask:
                 payload["target"]["target_rps"] = float(target_rps)
             if slo_ms:
                 payload["target"]["slo_ms_max_optional"] = float(slo_ms)
-            # think_time removed
         except Exception:
             flash("Числовые поля формы содержат ошибки.", "danger")
             return redirect(url_for("index"))
 
         try:
-            validated = InputSchema.model_validate(payload)  # Pydantic v2
-        except AttributeError:
-            # Pydantic v1 fallback
-            validated = InputSchema.parse_obj(payload)  # type: ignore
-        except Exception as e:
-            flash(f"Ошибка валидации: {e}", "danger")
-            return redirect(url_for("index"))
-
-        try:
-            result = compute_forecast(validated)
+            result = run_forecast(payload)
         except Exception as e:
             logging.exception("Forecast computation failed")
             flash(f"Ошибка расчёта прогноза: {e}", "danger")
             return redirect(url_for("index"))
 
         # Keep JSON and rendered report for optional PDF export
-        try:
-            result_json = result.model_dump()  # v2
-        except AttributeError:
-            result_json = result.dict()  # v1
+        result_json = dump_forecast(result)
         session["last_forecast_json"] = json.dumps(result_json, ensure_ascii=False)
 
         # Render results page
@@ -270,6 +257,39 @@ def create_app() -> Flask:
             return jsonify({"error": "dataset not found"}), 404
         except Exception as e:
             return jsonify({"error": f"failed to load dataset: {e}"}), 500
+
+    @app.route("/data/save", methods=["POST"])
+    def save_dataset():
+        if not request.is_json:
+            return jsonify({"error": "Ожидается application/json"}), 400
+        body = request.get_json(force=False, silent=True) or {}
+        form_token = str(body.get("csrf_token", ""))
+        if not form_token or form_token != session.get("csrf_token"):
+            return jsonify({"error": "Неверный CSRF токен. Обновите страницу."}), 400
+        raw_name = str(body.get("name", "")).strip()
+        safe = "".join(ch for ch in raw_name if (ch.isalnum() or ch in ("-", "_")))
+        if not safe:
+            return jsonify({"error": "Некорректное название набора данных"}), 400
+        payload = body.get("payload")
+        if not isinstance(payload, dict):
+            return jsonify({"error": "payload должен быть объектом"}), 400
+        try:
+            validated = validate_input(payload)
+            try:
+                dataset_json = validated.model_dump()
+            except AttributeError:
+                dataset_json = validated.dict()
+        except Exception as e:
+            return jsonify({"error": f"Ошибка валидации: {e}"}), 400
+        data_dir = os.path.join(os.path.dirname(__file__), "data")
+        path = os.path.join(data_dir, f"{safe}.json")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(dataset_json, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+        except Exception as e:
+            return jsonify({"error": f"failed to save dataset: {e}"}), 500
+        return jsonify({"status": "ok", "name": safe}), 200
 
     # removed AJAX-only preview route
 

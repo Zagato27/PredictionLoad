@@ -1,12 +1,9 @@
 import math
-import statistics
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import curve_fit
 
 from services.models import (
     mm1_response_time_ms,
@@ -15,10 +12,10 @@ from services.models import (
 )
 from services.schemas import (
     Capacity,
+    ForecastMeta,
     ForecastOutput,
     InputSchema,
     LatencyPair,
-    SeriesNetworkPoint,
     MMCOut,
     ModelsOut,
     SeriesInstancesPoint,
@@ -29,7 +26,6 @@ from services.schemas import (
     TargetsLatency,
     TargetsOut,
     TargetsUtil,
-    USLParams,
     Variability,
 )
 
@@ -39,7 +35,6 @@ class DerivedParams:
     D_cpu_s: float
     D_ram_s: float
     D_io_s: float
-    D_net_s: float
     S_ms: float
     Ca: float
     Cs: float
@@ -49,8 +44,6 @@ class DerivedParams:
     avg_cpu_limit_m_per_pod: float
     avg_mem_request_mib_per_pod: float
     avg_mem_limit_mib_per_pod: float
-    slope_net_in: float
-    slope_net_out: float
 
 
 def _fit_slope_through_origin(x: np.ndarray, y: np.ndarray) -> float:
@@ -61,21 +54,6 @@ def _fit_slope_through_origin(x: np.ndarray, y: np.ndarray) -> float:
     if denom <= 0:
         return float("nan")
     return float(np.dot(x, y) / denom)
-
-
-def _fit_usl(N: np.ndarray, X: np.ndarray) -> Tuple[float, float, float]:
-    # X(N) = X1 * N / (1 + alpha*(N-1) + beta*N*(N-1))
-    def usl_fn(Nv, alpha, beta, X1):
-        return (X1 * Nv) / (1.0 + alpha * (Nv - 1.0) + beta * Nv * (Nv - 1.0))
-
-    p0 = [0.01, 1e-4, float(max(1.0, X.min()))]
-    bounds = ([0.0, 0.0, 0.0], [10.0, 1.0, 1e8])
-    try:
-        popt, _ = curve_fit(usl_fn, N, X, p0=p0, bounds=bounds, maxfev=20000)
-        alpha, beta, X1 = popt
-    except Exception:
-        alpha, beta, X1 = 0.02, 1e-4, float(max(1.0, X.min()))
-    return float(alpha), float(beta), float(X1)
 
 
 def _calc_variability(steps_df: pd.DataFrame) -> Tuple[float, float]:
@@ -122,8 +100,6 @@ def _derive_params(data: InputSchema) -> DerivedParams:
 
     cpu_utils = []
     ram_utils = []
-    net_in_vals = []
-    net_out_vals = []
     cpu_req_pp = []
     cpu_lim_pp = []
     mem_req_pp = []
@@ -157,14 +133,8 @@ def _derive_params(data: InputSchema) -> DerivedParams:
             ram_utils.append(u)
         else:
             ram_utils.append(float(row.get("ram_util", float("nan"))))
-        # Net absolute MB/s
-        net_in_vals.append(float(row.get("net_in_mbps", float("nan"))))
-        net_out_vals.append(float(row.get("net_out_mbps", float("nan"))))
-
     steps["cpu_util"] = pd.Series(cpu_utils, index=steps.index)
     steps["ram_util"] = pd.Series(ram_utils, index=steps.index)
-    steps["net_in_mbps"] = pd.Series(net_in_vals, index=steps.index)
-    steps["net_out_mbps"] = pd.Series(net_out_vals, index=steps.index)
 
     # Linear region for device demands
     lin = _select_linear_region(steps)
@@ -175,37 +145,27 @@ def _derive_params(data: InputSchema) -> DerivedParams:
     D_io = _fit_slope_through_origin(
         X, lin["io_util"].to_numpy(dtype=float) if "io_util" in lin.columns else np.array([])
     )
-    D_net = _fit_slope_through_origin(
-        X, lin["net_util"].to_numpy(dtype=float) if "net_util" in lin.columns else np.array([])
-    )
 
     # Service time S ~= max(D_i)
-    D_list = [v for v in [D_cpu, D_io, D_net] if np.isfinite(v) and v > 0]
+    D_list = [v for v in [D_cpu, D_io] if np.isfinite(v) and v > 0]
     if not D_list:
         # Fallback: use smallest observed avg_ms as S approx at low load
         S_ms = float(steps.iloc[0]["avg_ms"])
-        D_cpu = D_io = D_net = S_ms / 1000.0 / 3.0
-        # RAM как отдельный ресурс
+        D_cpu = D_io = S_ms / 1000.0 / 3.0
+        # RAM remains a separate capacity resource.
         if not (np.isfinite(D_ram) and D_ram > 0):
             D_ram = S_ms / 1000.0 / 3.0
     else:
         S_ms = max(D_list) * 1000.0
 
-    X_vals = steps["rps"].to_numpy(dtype=float)
-
     Ca, Cs = _calc_variability(steps)
 
     c = int(data.capacity.mmc_c_optional or 1)
-
-    # Network regression slope (MB/s per RPS) via origin fit
-    slope_in = _fit_slope_through_origin(X_vals, steps["net_in_mbps"].to_numpy(dtype=float))
-    slope_out = _fit_slope_through_origin(X_vals, steps["net_out_mbps"].to_numpy(dtype=float))
 
     return DerivedParams(
         D_cpu_s=float(D_cpu if np.isfinite(D_cpu) and D_cpu > 0 else 0.001),
         D_ram_s=float(D_ram if np.isfinite(D_ram) and D_ram > 0 else 0.001),
         D_io_s=float(D_io if np.isfinite(D_io) and D_io > 0 else 0.001),
-        D_net_s=float(D_net if np.isfinite(D_net) and D_net > 0 else 0.001),
         S_ms=float(S_ms),
         Ca=Ca,
         Cs=Cs,
@@ -215,8 +175,6 @@ def _derive_params(data: InputSchema) -> DerivedParams:
         avg_cpu_limit_m_per_pod=float(np.nanmean(cpu_lim_pp) if cpu_lim_pp else 0.0),
         avg_mem_request_mib_per_pod=float(np.nanmean(mem_req_pp) if mem_req_pp else 0.0),
         avg_mem_limit_mib_per_pod=float(np.nanmean(mem_lim_pp) if mem_lim_pp else 0.0),
-        slope_net_in=float(slope_in if np.isfinite(slope_in) and slope_in > 0 else 0.0),
-        slope_net_out=float(slope_out if np.isfinite(slope_out) and slope_out > 0 else 0.0),
     )
 
 
@@ -229,8 +187,22 @@ def _kingman_R_ms(X: float, S_ms: float, Ca: float, Cs: float) -> float:
     return (S_s + Wq) * 1000.0
 
 
-def _utilizations(X: float, d: DerivedParams) -> Tuple[float, float, float, float]:
-    return X * d.D_cpu_s, X * d.D_ram_s, X * d.D_io_s, X * d.D_net_s
+def _ggc_response_time_ms(X: float, S_ms: float, Ca: float, Cs: float, c: int) -> float:
+    S_s = S_ms / 1000.0
+    mu = 1.0 / S_s
+    lam = X
+    a = lam / mu
+    denom = c * mu - lam
+    if denom <= 0:
+        return float("inf")
+    Pw = erlang_c_wait_probability(a, c)
+    Wq_mmc_s = Pw / denom
+    Wq_ggc_s = ((Ca * Ca + Cs * Cs) / 2.0) * Wq_mmc_s
+    return (S_s + Wq_ggc_s) * 1000.0
+
+
+def _utilizations(X: float, d: DerivedParams) -> Tuple[float, float, float]:
+    return X * d.D_cpu_s, X * d.D_ram_s, X * d.D_io_s
 
 
 def _instances_needed(u: float, u_max: float) -> int:
@@ -258,7 +230,7 @@ def _suggest_m_for_slo(
 
 
 def compute_forecast(data: InputSchema) -> ForecastOutput:
-    # Filter out too erroneous steps for observed series (but keep for USL fit done earlier)
+    # Filter out too erroneous steps for observed series.
     steps = [s for s in data.steps if s.errors_pct <= 5.0]
     if len(steps) < 2:
         raise ValueError("Фильтр steps: недостаточно данных (исключены все с errors_pct >5%)")
@@ -269,45 +241,46 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
 
     # Ratios
     k_peak = params.baseline_ratio_max_to_avg
+    modeling = data.modeling
 
     # Target latencies per model
-    m_m_1_avg = mm1_response_time_ms(params.S_ms, X_target)
-    m_m_1_max = m_m_1_avg * k_peak
+    m_m_1_avg = mm1_response_time_ms(params.S_ms, X_target) if modeling.use_m_m_1 else None
+    m_m_1_max = m_m_1_avg * k_peak if m_m_1_avg is not None else None
 
     c = params.mmc_c
-    m_m_c_avg, wait_prob = mmc_response_time_ms(params.S_ms, X_target, c)
-    m_m_c_max = m_m_c_avg * k_peak
+    if modeling.use_m_m_c:
+        m_m_c_avg, wait_prob = mmc_response_time_ms(params.S_ms, X_target, c)
+        m_m_c_max = m_m_c_avg * k_peak
+    else:
+        m_m_c_avg = None
+        m_m_c_max = None
+        wait_prob = 0.0
 
-    kingman_avg = _kingman_R_ms(X_target, params.S_ms, params.Ca, params.Cs)
-    kingman_max = kingman_avg * k_peak
+    kingman_avg = _kingman_R_ms(X_target, params.S_ms, params.Ca, params.Cs) if modeling.use_kingman else None
+    kingman_max = kingman_avg * k_peak if kingman_avg is not None else None
 
     # G/G/c (Allen–Cunneen) at target
-    mu = 1.0 / (params.S_ms / 1000.0)
-    lam = X_target
-    a = lam / mu
-    Pw = erlang_c_wait_probability(a, c)
-    denom = max(1e-12, c * mu - lam)
-    Wq_mmc_s = Pw / denom
-    Wq_ggc_s = ((params.Ca * params.Ca + params.Cs * params.Cs) / 2.0) * Wq_mmc_s
-    ggc_avg_ms = (params.S_ms / 1000.0 + Wq_ggc_s) * 1000.0
-    ggc_max_ms = ggc_avg_ms * k_peak
+    if modeling.use_g_g_c:
+        ggc_avg_ms = _ggc_response_time_ms(X_target, params.S_ms, params.Ca, params.Cs, c)
+        ggc_max_ms = ggc_avg_ms * k_peak
+    else:
+        ggc_avg_ms = None
+        ggc_max_ms = None
 
     # Utilizations at target
-    u_cpu, u_ram, u_io, u_net = _utilizations(X_target, params)
+    u_cpu, u_ram, u_io = _utilizations(X_target, params)
 
     cap: Capacity = data.capacity
     u_max_cpu = float(cap.u_max_cpu)
     u_max_ram = float(cap.u_max_ram)
     u_max_io = float(cap.u_max_io_optional or 1.0)
-    u_max_net = float(cap.u_max_net_optional or 1.0)
     inst_cpu = _instances_needed(u_cpu, u_max_cpu)
     inst_ram = _instances_needed(u_ram, u_max_ram)
     inst_io = _instances_needed(u_io, u_max_io)
-    inst_net = _instances_needed(u_net, u_max_net)
     cpu_based = max(inst_cpu, 1)
     ram_based = max(inst_ram, 1)
 
-    # Suggested m for M/M/c to meet SLO if given (оставляем в models.mmc, а instances.suggested_m = max(cpu,ram))
+    # Suggested m for M/M/c to meet SLO if given.
     suggested_c = c
     if slo_ms > 0.0:
         suggested_c, _ = _suggest_m_for_slo(X_target, params.S_ms, c, slo_ms)
@@ -315,13 +288,13 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
     targets = TargetsOut(
         rps=X_target,
         latency_ms=TargetsLatency(
-            m_m_1=LatencyPair(avg=m_m_1_avg, max=m_m_1_max),
-            m_m_c=LatencyPair(avg=m_m_c_avg, max=m_m_c_max),
-            kingman=LatencyPair(avg=kingman_avg, max=kingman_max),
-            g_g_c=LatencyPair(avg=ggc_avg_ms, max=ggc_max_ms),
+            m_m_1=LatencyPair(avg=m_m_1_avg, max=m_m_1_max) if m_m_1_avg is not None and m_m_1_max is not None else None,
+            m_m_c=LatencyPair(avg=m_m_c_avg, max=m_m_c_max) if m_m_c_avg is not None and m_m_c_max is not None else None,
+            kingman=LatencyPair(avg=kingman_avg, max=kingman_max) if kingman_avg is not None and kingman_max is not None else None,
+            g_g_c=LatencyPair(avg=ggc_avg_ms, max=ggc_max_ms) if ggc_avg_ms is not None and ggc_max_ms is not None else None,
         ),
-        utilization=TargetsUtil(cpu=u_cpu, ram=u_ram, io=u_io, net=u_net),
-        instances=TargetsInstances(cpu_based=cpu_based, ram_based=ram_based, suggested_m=int(max(cpu_based, ram_based))),
+        utilization=TargetsUtil(cpu=u_cpu, ram=u_ram, io=u_io),
+        instances=TargetsInstances(cpu_based=cpu_based, ram_based=ram_based, suggested_m=int(max(cpu_based, ram_based, suggested_c))),
     )
 
     models = ModelsOut(
@@ -352,26 +325,26 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
     series_latency: List[SeriesLatencyPoint] = []
     series_util: List[SeriesUtilPoint] = []
     series_instances: List[SeriesInstancesPoint] = []
-    series_net: List[SeriesNetworkPoint] = []
 
     for r in grid:
         # Predicted by models
-        mm1_avg = mm1_response_time_ms(params.S_ms, r)
-        mm1_max = mm1_avg * k_peak
-        mmc_avg, _ = mmc_response_time_ms(params.S_ms, r, c)
-        mmc_max = mmc_avg * k_peak
-        k_avg = _kingman_R_ms(r, params.S_ms, params.Ca, params.Cs)
-        k_max = k_avg * k_peak
+        mm1_avg = mm1_response_time_ms(params.S_ms, r) if modeling.use_m_m_1 else None
+        mm1_max = mm1_avg * k_peak if mm1_avg is not None else None
+        if modeling.use_m_m_c:
+            mmc_avg, _ = mmc_response_time_ms(params.S_ms, r, c)
+            mmc_max = mmc_avg * k_peak
+        else:
+            mmc_avg = None
+            mmc_max = None
+        k_avg = _kingman_R_ms(r, params.S_ms, params.Ca, params.Cs) if modeling.use_kingman else None
+        k_max = k_avg * k_peak if k_avg is not None else None
         # G/G/c series point
-        mu_r = mu  # S assumed constant across r
-        lam_r = r
-        a_r = lam_r / mu_r
-        Pw_r = erlang_c_wait_probability(a_r, c)
-        denom_r = max(1e-12, c * mu_r - lam_r)
-        Wq_mmc_s_r = Pw_r / denom_r
-        Wq_ggc_s_r = ((params.Ca * params.Ca + params.Cs * params.Cs) / 2.0) * Wq_mmc_s_r
-        ggc_avg_r = (params.S_ms / 1000.0 + Wq_ggc_s_r) * 1000.0
-        ggc_max_r = ggc_avg_r * k_peak
+        if modeling.use_g_g_c:
+            ggc_avg_r = _ggc_response_time_ms(r, params.S_ms, params.Ca, params.Cs, c)
+            ggc_max_r = ggc_avg_r * k_peak
+        else:
+            ggc_avg_r = None
+            ggc_max_r = None
 
         # Observed if exact step
         obs = observed_map.get(float(round(r, 6)))
@@ -395,23 +368,13 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
         )
 
         # Utilizations and instances
-        u_cpu_r, u_ram_r, u_io_r, u_net_r = _utilizations(r, params)
-        # Optionally compute network utils if capacity known
-        cap_in = float(data.capacity.net_capacity_in_mbps_optional or 0.0)
-        cap_out = float(data.capacity.net_capacity_out_mbps_optional or 0.0)
-        net_in_pred_r = params.slope_net_in * r
-        net_out_pred_r = params.slope_net_out * r
-        net_in_util_r = (net_in_pred_r / cap_in) if cap_in > 0 else None
-        net_out_util_r = (net_out_pred_r / cap_out) if cap_out > 0 else None
+        u_cpu_r, u_ram_r, u_io_r = _utilizations(r, params)
         series_util.append(
             SeriesUtilPoint(
                 rps=float(r),
                 cpu=u_cpu_r,
                 ram=u_ram_r,
                 io=u_io_r,
-                net=u_net_r,
-                net_in_util=net_in_util_r,
-                net_out_util=net_out_util_r,
             )
         )
         series_instances.append(
@@ -420,23 +383,11 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
                 instances_cpu=_instances_needed(u_cpu_r, u_max_cpu),
                 instances_ram=_instances_needed(u_ram_r, u_max_ram),
                 instances_io=_instances_needed(u_io_r, u_max_io),
-                instances_net=_instances_needed(u_net_r, u_max_net),
-            )
-        )
-        series_net.append(
-            SeriesNetworkPoint(
-                rps=float(r),
-                net_in_mbps=net_in_pred_r,
-                net_out_mbps=net_out_pred_r,
-                cap_in_mbps=cap_in if cap_in > 0 else None,
-                cap_out_mbps=cap_out if cap_out > 0 else None,
-                in_exceeds=bool(cap_in > 0 and net_in_pred_r > cap_in),
-                out_exceeds=bool(cap_out > 0 and net_out_pred_r > cap_out),
             )
         )
 
     series = SeriesOut(
-        latency_vs_rps=series_latency, util_vs_rps=series_util, instances_vs_rps=series_instances, net_vs_rps=series_net
+        latency_vs_rps=series_latency, util_vs_rps=series_util, instances_vs_rps=series_instances
     )
 
     # Meta summary for UI
@@ -457,42 +408,118 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
             linear_steps = "?"
     except Exception:
         linear_steps = "?"
-    saturation_hint = ""
     slo_text = ""
     if data.target.slo_ms_max_optional:
         slo_text = f"SLO={int(data.target.slo_ms_max_optional)} мс"
-    # Memory recommendation text
-    ram_reco = ""
-    if u_ram > u_max_ram:
-        ram_reco = f" RAM {u_ram*100:.0f}% (> {u_max_ram*100:.0f}%) — масштабируйте на {inst_ram} инстанса."
+    avg_candidates = [
+        value
+        for value in (m_m_1_avg, kingman_avg, ggc_avg_ms, m_m_c_avg)
+        if value is not None and math.isfinite(value)
+    ]
+    max_candidates = [
+        value
+        for value in (m_m_1_max, kingman_max, ggc_max_ms, m_m_c_max)
+        if value is not None and math.isfinite(value)
+    ]
+    avg_range_text = (
+        f"{min(avg_candidates):.1f}–{max(avg_candidates):.1f} мс"
+        if avg_candidates
+        else "н/д"
+    )
+    max_latency_text = f"{max(max_candidates):.1f} мс" if max_candidates else "н/д"
+    cpu_pressure = u_cpu / max(1e-9, u_max_cpu)
+    ram_pressure = u_ram / max(1e-9, u_max_ram)
+    if ram_pressure >= cpu_pressure:
+        bottleneck = "RAM"
+        bottleneck_pressure = ram_pressure
     else:
-        ram_reco = " Память не лимитирует загрузку."
+        bottleneck = "CPU"
+        bottleneck_pressure = cpu_pressure
+
+    primary_model = "n/a"
+    primary_avg_ms = None
+    primary_max_ms = None
+    for model_name, avg_value, max_value in (
+        ("G/G/c", ggc_avg_ms, ggc_max_ms),
+        ("M/M/c", m_m_c_avg, m_m_c_max),
+        ("Kingman G/G/1", kingman_avg, kingman_max),
+        ("M/M/1", m_m_1_avg, m_m_1_max),
+    ):
+        if (
+            avg_value is not None
+            and max_value is not None
+            and math.isfinite(avg_value)
+            and math.isfinite(max_value)
+        ):
+            primary_model = model_name
+            primary_avg_ms = avg_value
+            primary_max_ms = max_value
+            break
+
+    slo_margin_ms = None
+    if slo_ms > 0.0 and primary_max_ms is not None and math.isfinite(primary_max_ms):
+        slo_margin_ms = slo_ms - primary_max_ms
+        slo_status = "ok" if slo_margin_ms >= 0 else "risk"
+    elif slo_ms > 0.0:
+        slo_status = "risk"
+    else:
+        slo_status = "unknown"
+
+    max_observed_rps = float(max_rps_obs)
+    target_over_observed_ratio = X_target / max(1e-9, max_observed_rps)
+    excluded_steps = num_steps - len(steps)
+    quality_warnings: List[str] = []
+    if len(steps) < 3:
+        quality_warnings.append("Мало пригодных ступеней: прогноз чувствителен к шуму.")
+    if excluded_steps > 0:
+        quality_warnings.append(f"Исключено ступеней с errors_pct > 5%: {excluded_steps}.")
+    if target_over_observed_ratio > 1.5:
+        quality_warnings.append("Целевой RPS сильно выше наблюдаемого диапазона: экстраполяция рискованна.")
+    if params.Ca > 1.0 or params.Cs > 1.5:
+        quality_warnings.append("Высокая вариативность нагрузки или сервиса: ориентируйтесь на G/G/c.")
+    if primary_model == "n/a":
+        quality_warnings.append("Нет включённой основной latency-модели.")
+    if not quality_warnings:
+        quality_warnings.append("Критичных предупреждений по входным данным нет.")
+
+    cpu_headroom_pct = (u_max_cpu - u_cpu) * 100.0
+    ram_headroom_pct = (u_max_ram - u_ram) * 100.0
 
     summary = (
         f"Анализ на основе {num_steps} ступеней: Линейный участок — steps {linear_steps}. "
         f"Сервисное время S={params.S_ms:.1f} мс. На target_rps={X_target:.0f}: "
-        f"Средняя задержка {min(m_m_1_avg, kingman_avg, ggc_avg_ms):.1f}–{max(m_m_1_avg, kingman_avg, ggc_avg_ms):.1f} мс; "
-        f"максимальная до {max(m_m_1_max, kingman_max, ggc_max_ms):.1f} мс "
-        f"({slo_text}). Узкое место: CPU {u_cpu*100:.0f}% — масштабируйте на {max(1, int(math.ceil(u_cpu / max(1e-9, float(data.capacity.u_max_cpu)))))} инстанса."
-        f"{ram_reco}"
+        f"Средняя задержка {avg_range_text}; "
+        f"максимальная до {max_latency_text} "
+        f"({slo_text}). Узкое место: {bottleneck} — масштабируйте на {targets.instances.suggested_m} инстанса."
     )
 
     out = ForecastOutput(
         targets=targets,
         models=models,
         series=series,
-        meta={
-            "summary": summary,
-            "slo_ms_max_optional": str(int(slo_ms)) if slo_ms > 0 else "",
-            "u_max_ram": f"{u_max_ram:.2f}",
-            "u_max_cpu": f"{u_max_cpu:.2f}",
-        },
-        network={
-            "net_in_mbps_target": params.slope_net_in * X_target,
-            "net_out_mbps_target": params.slope_net_out * X_target,
-            "cap_in_mbps": float(data.capacity.net_capacity_in_mbps_optional or 0.0),
-            "cap_out_mbps": float(data.capacity.net_capacity_out_mbps_optional or 0.0),
-        },
+        meta=ForecastMeta(
+            summary=summary,
+            slo_ms_max_optional=str(int(slo_ms)) if slo_ms > 0 else "",
+            u_max_ram=f"{u_max_ram:.2f}",
+            u_max_cpu=f"{u_max_cpu:.2f}",
+            observed_steps=num_steps,
+            used_steps=len(steps),
+            excluded_steps=excluded_steps,
+            linear_steps=linear_steps,
+            max_observed_rps=max_observed_rps,
+            target_over_observed_ratio=target_over_observed_ratio,
+            bottleneck=bottleneck,
+            bottleneck_pressure=bottleneck_pressure,
+            recommended_replicas=targets.instances.suggested_m,
+            primary_model=primary_model,
+            primary_avg_ms=primary_avg_ms,
+            primary_max_ms=primary_max_ms,
+            slo_status=slo_status,
+            slo_margin_ms=slo_margin_ms,
+            cpu_headroom_pct=cpu_headroom_pct,
+            ram_headroom_pct=ram_headroom_pct,
+            quality_warnings=quality_warnings,
+        ),
     )
     return out
 
