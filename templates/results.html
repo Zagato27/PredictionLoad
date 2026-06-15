@@ -297,7 +297,7 @@
 
       <div class="d-flex mt-3">
         <a class="btn btn-outline-secondary" href="/" role="button">Новый расчёт</a>
-        <button class="btn btn-outline-primary ms-2" id="btn-export-json">Экспорт JSON</button>
+        <button class="btn btn-outline-primary ms-2" id="btn-export-report">Экспорт краткого отчёта</button>
       </div>
     </main>
 
@@ -306,15 +306,9 @@
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         window.renderForecastCharts(window.FORECAST_DATA, window.PAGE_META);
-        document.getElementById('btn-export-json').addEventListener('click', function() {
-          const data = window.FORECAST_DATA;
-          const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'forecast.json';
-          a.click();
-          URL.revokeObjectURL(url);
+        document.getElementById('btn-export-report').addEventListener('click', function() {
+          const text = window.buildCompactForecastReport(window.FORECAST_DATA, window.PAGE_META);
+          window.downloadTextFile('forecast-report.txt', text);
         });
       });
     </script>

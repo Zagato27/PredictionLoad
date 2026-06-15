@@ -39,6 +39,82 @@ function maxFinite(values, fallback) {
   return finiteValues.length ? Math.max(...finiteValues) : fallback;
 }
 
+function formatNumber(value, digits) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+  return value.toFixed(digits);
+}
+
+function formatSignedNumber(value, digits) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`;
+}
+
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function buildCompactForecastReport(forecast, pageMeta) {
+  const meta = forecast.meta || {};
+  const targets = forecast.targets || {};
+  const instances = targets.instances || {};
+  const utilization = targets.utilization || {};
+  const models = forecast.models || {};
+  const kube = models.kube || {};
+  const latency = targets.latency_ms || {};
+  const primaryModelKey = meta.primary_model === 'G/G/c' ? 'g_g_c' : 'm_m_c';
+  const primaryLatency = latency[primaryModelKey] || latency.g_g_c || latency.m_m_c || null;
+  const sloStatus = meta.slo_status === 'ok' ? 'OK' : (meta.slo_status === 'risk' ? 'РИСК' : 'не задан');
+  const lines = [
+    'Краткий прогноз нагрузки',
+    `Дата расчёта: ${(pageMeta && pageMeta.now) || 'n/a'}`,
+    '',
+    'Вердикт',
+    `- Target RPS: ${formatNumber(targets.rps, 1)}`,
+    `- SLO: ${meta.slo_ms_max_optional ? `${meta.slo_ms_max_optional} мс` : 'не задан'}`,
+    `- Статус SLO: ${sloStatus}`,
+    `- Запас SLO: ${formatSignedNumber(meta.slo_margin_ms, 1)} мс`,
+    `- Основная модель: ${meta.primary_model || 'n/a'}`,
+    `- Прогноз max latency: ${formatNumber(primaryLatency && primaryLatency.max, 1)} мс`,
+    `- Прогноз avg latency: ${formatNumber(primaryLatency && primaryLatency.avg, 1)} мс`,
+    '',
+    'Рекомендация',
+    `- Реплики: ${instances.suggested_m || meta.recommended_replicas || 'n/a'}`,
+    `- Ограничивающий ресурс: ${meta.bottleneck || 'n/a'}`,
+    `- CPU-based: ${instances.cpu_based || 'n/a'}`,
+    `- RAM-based: ${instances.ram_based || 'n/a'}`,
+    '',
+    'Ресурсы на target RPS',
+    `- CPU util: ${formatNumber((utilization.cpu || 0) * 100, 1)}% при пороге ${meta.u_max_cpu ? formatNumber(Number(meta.u_max_cpu) * 100, 1) : 'n/a'}%`,
+    `- RAM util: ${formatNumber((utilization.ram || 0) * 100, 1)}% при пороге ${meta.u_max_ram ? formatNumber(Number(meta.u_max_ram) * 100, 1) : 'n/a'}%`,
+    `- CPU запас: ${formatSignedNumber(meta.cpu_headroom_pct, 1)}%`,
+    `- RAM запас: ${formatSignedNumber(meta.ram_headroom_pct, 1)}%`,
+    '',
+    'Kubernetes requests/limits',
+    `- CPU request/limit на pod: ${formatNumber(kube.cpu_request_m_per_pod, 0)}m / ${formatNumber(kube.cpu_limit_m_per_pod, 0)}m`,
+    `- RAM request/limit на pod: ${formatNumber(kube.mem_request_mib_per_pod, 0)} MiB / ${formatNumber(kube.mem_limit_mib_per_pod, 0)} MiB`,
+    '',
+    'Качество прогноза',
+    `- Использовано ступеней: ${meta.used_steps || 'n/a'} из ${meta.observed_steps || 'n/a'}`,
+    `- Исключено ступеней: ${meta.excluded_steps || 0}`,
+    `- Линейный участок: ${meta.linear_steps || 'n/a'}`,
+    `- Target / max observed RPS: ${formatNumber(meta.target_over_observed_ratio, 2)}x`,
+    `- Service time S: ${formatNumber(models.service_time_ms, 1)} мс`,
+    '',
+    'Предупреждения',
+    ...(Array.isArray(meta.quality_warnings) ? meta.quality_warnings.map((warning) => `- ${warning}`) : ['- n/a']),
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
+window.downloadTextFile = downloadTextFile;
+window.buildCompactForecastReport = buildCompactForecastReport;
+
 function numberValue(root, selector, required) {
   const element = root.querySelector(selector);
   if (!element || element.value === '') {
