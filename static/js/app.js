@@ -350,7 +350,11 @@ function formatTooltipNumber(value, digits, suffix) {
 
 function initEchart(id) {
   const element = document.getElementById(id);
-  if (!element || typeof echarts === 'undefined') return null;
+  if (!element) return null;
+  if (typeof echarts === 'undefined') {
+    element.innerHTML = '<div class="alert alert-warning mb-0">Не удалось загрузить библиотеку графиков ECharts. Проверьте доступ к CDN или обновите страницу без кэша.</div>';
+    return null;
+  }
   return echarts.init(element);
 }
 
