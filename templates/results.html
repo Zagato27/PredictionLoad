@@ -6,7 +6,7 @@
     <title>Результаты прогноза</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
-    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script>
       window.FORECAST_DATA = {{ result_json|tojson }};
       window.PAGE_META = {
@@ -242,55 +242,20 @@
         </div>
       </div>
 
-      <div class="row g-3 mt-1">
-        <div class="col-12">
-          <div class="card">
-            <div class="card-header">Пройдём ли SLO?</div>
-            <div class="card-body">
-              <div id="chart-latency" style="height:420px;" aria-label="График зависимости задержки от RPS."></div>
-              <div class="small text-muted mt-2">Показывает основной прогноз максимальной задержки, фактические пики, SLO и точку, где начинается риск.</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-12">
-          <div class="card">
-            <div class="card-header">Где закончится ресурсный запас?</div>
-            <div class="card-body">
-              <div id="chart-util" style="height:360px;" aria-label="График утилизации CPU и RAM по мере роста RPS."></div>
-              <div class="small text-muted mt-2">Положительный запас означает, что ресурс ниже порога; отрицательный запас означает превышение u_max.</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-12">
-          <div class="card">
-            <div class="card-header">Сколько реплик понадобится?</div>
-            <div class="card-body">
-              <div id="chart-instances" style="height:360px;" aria-label="Ступенчатый график количества инстансов."></div>
-              <div class="small text-muted mt-2">Ступеньки показывают дискретное масштабирование; линия рекомендации выделяет целевое число реплик.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="card mt-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>Инженерные графики</span>
-          <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#engineering-charts" aria-expanded="false" aria-controls="engineering-charts">Показать</button>
-        </div>
-        <div class="collapse" id="engineering-charts">
-          <div class="card-body">
-            <div class="mb-3">
-              <h6>Все latency-модели</h6>
-              <div id="chart-engineering-latency" style="height:420px;" aria-label="Инженерный график всех latency-моделей."></div>
-            </div>
-            <div class="mb-3">
-              <h6>Утилизация CPU/RAM</h6>
-              <div id="chart-engineering-util" style="height:360px;" aria-label="Инженерный график утилизации CPU и RAM."></div>
-            </div>
-            <div>
-              <h6>Инстансы по ресурсам</h6>
-              <div id="chart-engineering-instances" style="height:360px;" aria-label="Инженерный график инстансов по ресурсам."></div>
-            </div>
+        <div class="card-header">Графики прогноза</div>
+        <div class="card-body">
+          <div class="mb-3">
+            <h6>Все latency-модели</h6>
+            <div id="chart-engineering-latency" style="height:420px;" aria-label="Инженерный график всех latency-моделей."></div>
+          </div>
+          <div class="mb-3">
+            <h6>Утилизация CPU/RAM</h6>
+            <div id="chart-engineering-util" style="height:360px;" aria-label="Инженерный график утилизации CPU и RAM."></div>
+          </div>
+          <div>
+            <h6>Инстансы по ресурсам</h6>
+            <div id="chart-engineering-instances" style="height:360px;" aria-label="Инженерный график инстансов по ресурсам."></div>
           </div>
         </div>
       </div>
