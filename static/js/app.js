@@ -67,7 +67,7 @@ function buildCompactForecastReport(forecast, pageMeta) {
   const models = forecast.models || {};
   const kube = models.kube || {};
   const latency = targets.latency_ms || {};
-  const primaryModelKey = meta.primary_model === 'G/G/c' ? 'g_g_c' : 'm_m_c';
+  const primaryModelKey = meta.primary_model === 'Empirical observed curve' ? 'empirical' : (meta.primary_model === 'G/G/c' ? 'g_g_c' : 'm_m_c');
   const primaryLatency = latency[primaryModelKey] || latency.g_g_c || latency.m_m_c || null;
   const sloStatus = meta.slo_status === 'ok' ? 'OK' : (meta.slo_status === 'risk' ? 'РИСК' : 'не задан');
   const lines = [
@@ -90,10 +90,10 @@ function buildCompactForecastReport(forecast, pageMeta) {
     `- RAM-based: ${instances.ram_based || 'n/a'}`,
     '',
     'Ресурсы на target RPS',
-    `- CPU util: ${formatNumber((utilization.cpu || 0) * 100, 1)}% при пороге ${meta.u_max_cpu ? formatNumber(Number(meta.u_max_cpu) * 100, 1) : 'n/a'}%`,
-    `- RAM util: ${formatNumber((utilization.ram || 0) * 100, 1)}% при пороге ${meta.u_max_ram ? formatNumber(Number(meta.u_max_ram) * 100, 1) : 'n/a'}%`,
-    `- CPU запас: ${formatSignedNumber(meta.cpu_headroom_pct, 1)}%`,
-    `- RAM запас: ${formatSignedNumber(meta.ram_headroom_pct, 1)}%`,
+    `- CPU demand до масштабирования: ${formatNumber((utilization.cpu || 0) * 100, 1)}% от одного pod`,
+    `- RAM demand до масштабирования: ${formatNumber((utilization.ram || 0) * 100, 1)}% от одного pod`,
+    `- CPU util после ${instances.suggested_m || meta.recommended_replicas || 'n/a'} реплик: ${formatNumber((utilization.cpu_after_replicas || 0) * 100, 1)}% при пороге ${meta.u_max_cpu ? formatNumber(Number(meta.u_max_cpu) * 100, 1) : 'n/a'}%`,
+    `- RAM util после ${instances.suggested_m || meta.recommended_replicas || 'n/a'} реплик: ${formatNumber((utilization.ram_after_replicas || 0) * 100, 1)}% при пороге ${meta.u_max_ram ? formatNumber(Number(meta.u_max_ram) * 100, 1) : 'n/a'}%`,
     '',
     'Kubernetes requests/limits',
     `- CPU request/limit на pod: ${formatNumber(kube.cpu_request_m_per_pod, 0)}m / ${formatNumber(kube.cpu_limit_m_per_pod, 0)}m`,
@@ -419,6 +419,8 @@ window.renderForecastCharts = function (forecast) {
       },
     ];
     [
+      ['empirical_avg_ms', 'Empirical avg'],
+      ['empirical_max_ms', 'Empirical max'],
       ['m_m_1_avg_ms', 'M/M/1 avg'],
       ['m_m_c_avg_ms', 'M/M/c avg'],
       ['kingman_avg_ms', 'G/G/1 avg'],

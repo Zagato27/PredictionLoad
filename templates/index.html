@@ -49,24 +49,28 @@
                     <div class="form-text">Используется для сохранения в списке наборов.</div>
                   </div>
                   <div class="col-md-4">
-                    <label for="target_rps" class="form-label">Целевой RPS</label>
-                    <input class="form-control" type="number" step="1" min="1" id="target_rps" name="target_rps" required>
+                    <label for="target_rps" class="form-label">Сколько RPS должен выдержать сервис</label>
+                    <input class="form-control" type="number" step="1" min="1" id="target_rps" name="target_rps" placeholder="150" required>
+                    <div class="form-text">Общий поток запросов в секунду по всем pod’ам, а не на один pod.</div>
                   </div>
                   <div class="col-md-4">
                     <label for="slo_ms_max_optional" class="form-label">SLO max (мс)</label>
                     <input class="form-control" type="number" step="1" min="1" id="slo_ms_max_optional" name="slo_ms_max_optional">
                   </div>
                   <div class="col-md-4">
-                    <label for="mmc_c_optional" class="form-label">Число каналов c</label>
-                    <input class="form-control" type="number" step="1" min="1" id="mmc_c_optional" name="mmc_c_optional" required>
+                    <label for="mmc_c_optional" class="form-label">Обработчики для инженерной модели</label>
+                    <input class="form-control" type="number" step="1" min="1" id="mmc_c_optional" name="mmc_c_optional" placeholder="2" required>
+                    <div class="form-text">Используется только в диагностических графиках очередей. Если не знаете, поставьте текущее число pod’ов.</div>
                   </div>
                   <div class="col-md-4">
-                    <label for="u_max_cpu" class="form-label">u_max CPU</label>
-                    <input class="form-control" type="number" step="0.01" min="0.01" max="1" id="u_max_cpu" name="u_max_cpu" required>
+                    <label for="u_max_cpu" class="form-label">Когда добавлять pod по CPU</label>
+                    <input class="form-control" type="number" step="0.01" min="0.01" max="1" id="u_max_cpu" name="u_max_cpu" placeholder="0.8" required>
+                    <div class="form-text">Например 0.8 = добавлять pod, если прогноз выше 80% CPU request на pod.</div>
                   </div>
                   <div class="col-md-4">
-                    <label for="u_max_ram" class="form-label">u_max RAM</label>
-                    <input class="form-control" type="number" step="0.01" min="0.01" max="1" id="u_max_ram" name="u_max_ram" required>
+                    <label for="u_max_ram" class="form-label">Когда добавлять pod по RAM</label>
+                    <input class="form-control" type="number" step="0.01" min="0.01" max="1" id="u_max_ram" name="u_max_ram" placeholder="0.8" required>
+                    <div class="form-text">Например 0.8 = добавлять pod, если прогноз выше 80% memory request на pod.</div>
                   </div>
                 </div>
               </div>
@@ -98,8 +102,10 @@
                 <ul class="mb-2">
                   <li><b>Total RPS</b>, <b>avg/max</b> и <b>errors</b> описывают результат нагрузочного теста по всем pod’ам.</li>
                   <li><b>Pods</b> — число pod’ов на ступени; CPU usage/request/limit и RAM working set/request/limit вводятся на один pod.</li>
+                  <li><b>Когда добавлять pod по CPU/RAM</b> — это доли от requests, а не ядра или гигабайты: <code>0.8</code> означает 80%.</li>
+                  <li><b>Обработчики для инженерной модели</b> нужны только для диагностических графиков очередей; для обычного расчёта реплик важнее CPU/RAM поля.</li>
                   <li>Минимум нужно две ступени; при сохранении набор валидируется теми же схемами, что и расчёт.</li>
-                  <li>По умолчанию считаются все модели: M/M/1, M/M/c, G/G/1 и G/G/c.</li>
+                  <li>Основной latency-прогноз строится по observed latency curve; M/M/1, M/M/c, G/G/1 и G/G/c считаются как диагностика.</li>
                 </ul>
                 <p class="mb-0 text-muted">Сеть больше не участвует в расчёте и не вводится в форме.</p>
               </div>

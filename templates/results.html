@@ -93,7 +93,7 @@
                 <li>Установить целевое число реплик <b>{{ meta.recommended_replicas }}</b>.</li>
                 <li>Проверить HPA и requests/limits: CPU {{ '%.0f'|format(result_json.models.kube.cpu_request_m_per_pod or 0) }}m / {{ '%.0f'|format(result_json.models.kube.cpu_limit_m_per_pod or 0) }}m; RAM {{ '%.0f'|format(result_json.models.kube.mem_request_mib_per_pod or 0) }} / {{ '%.0f'|format(result_json.models.kube.mem_limit_mib_per_pod or 0) }} MiB.</li>
                 {% if meta.slo_status == 'risk' %}
-                <li>После масштабирования проверить SLO; если риск остаётся, увеличить <i>c</i> или снижать сервисное время S.</li>
+                <li>После масштабирования проверить SLO контрольным прогоном; если риск остаётся, оптимизировать сервисное время или внешний bottleneck.</li>
                 {% else %}
                 <li>Подтвердить результат контрольным нагрузочным прогоном на target RPS.</li>
                 {% endif %}
@@ -124,7 +124,7 @@
       <div class="row g-3 mt-1">
         <div class="col-lg-7">
           <div class="card">
-            <div class="card-header">Основные модели для Kubernetes</div>
+            <div class="card-header">Основной latency-прогноз</div>
             <div class="card-body">
               <div class="table-responsive">
                 <table class="table table-striped table-sm align-middle">
@@ -138,23 +138,11 @@
                   </thead>
                   <tbody>
                     <tr>
-                      <td>G/G/c <span class="badge bg-primary">основная</span></td>
-                      {% if lat.g_g_c %}
-                      {% set ggc_inf = (lat.g_g_c.avg|string) == 'inf' or (lat.g_g_c.max|string) == 'inf' %}
-                      <td>{% if ggc_inf %}∞{% else %}{{ '%.1f'|format(lat.g_g_c.avg) }}{% endif %}</td>
-                      <td>{% if ggc_inf %}∞{% else %}{{ '%.1f'|format(lat.g_g_c.max) }}{% endif %}</td>
-                      <td>{% if ggc_inf %}<span class="badge bg-danger">Нестабильно</span>{% elif not slo_num or lat.g_g_c.max <= slo_num %}<span class="badge bg-success">Стабильно</span>{% else %}<span class="badge bg-warning text-dark">Риск SLO</span>{% endif %} · учитывает вариативность</td>
-                      {% else %}
-                      <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
-                      {% endif %}
-                    </tr>
-                    <tr>
-                      <td>M/M/c <span class="badge bg-primary">основная</span></td>
-                      {% if lat.m_m_c %}
-                      {% set mmc_inf = (lat.m_m_c.avg|string) == 'inf' or (lat.m_m_c.max|string) == 'inf' %}
-                      <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.avg) }}{% endif %}</td>
-                      <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.max) }}{% endif %}</td>
-                      <td>{% if mmc_inf %}<span class="badge bg-danger">Нестабильно</span>{% elif not slo_num or lat.m_m_c.max <= slo_num %}<span class="badge bg-success">Стабильно</span>{% else %}<span class="badge bg-warning text-dark">Риск SLO</span>{% endif %} · c={{ result_json.models.mmc.c }}</td>
+                      <td>Empirical observed curve <span class="badge bg-primary">основная</span></td>
+                      {% if lat.empirical %}
+                      <td>{{ '%.1f'|format(lat.empirical.avg) }}</td>
+                      <td>{{ '%.1f'|format(lat.empirical.max) }}</td>
+                      <td>{% if not slo_num or lat.empirical.max <= slo_num %}<span class="badge bg-success">Стабильно</span>{% else %}<span class="badge bg-warning text-dark">Риск SLO</span>{% endif %} · построено по observed latency vs RPS</td>
                       {% else %}
                       <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
                       {% endif %}
@@ -162,6 +150,7 @@
                   </tbody>
                 </table>
               </div>
+              <div class="small text-muted mb-2">Queueing-модели ниже используются как инженерная диагностика, а не как основной прогноз задержки.</div>
               <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#diagnostic-models" aria-expanded="false" aria-controls="diagnostic-models">Показать диагностические модели</button>
               <div class="collapse mt-3" id="diagnostic-models">
                 <div class="table-responsive">
@@ -175,6 +164,28 @@
                       </tr>
                     </thead>
                     <tbody>
+                      <tr>
+                        <td>M/M/c</td>
+                        {% if lat.m_m_c %}
+                        {% set mmc_inf = (lat.m_m_c.avg|string) == 'inf' or (lat.m_m_c.max|string) == 'inf' %}
+                        <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.avg) }}{% endif %}</td>
+                        <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.max) }}{% endif %}</td>
+                        <td>Очередь с c={{ result_json.models.mmc.c }} каналами.</td>
+                        {% else %}
+                        <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
+                        {% endif %}
+                      </tr>
+                      <tr>
+                        <td>G/G/c</td>
+                        {% if lat.g_g_c %}
+                        {% set ggc_inf = (lat.g_g_c.avg|string) == 'inf' or (lat.g_g_c.max|string) == 'inf' %}
+                        <td>{% if ggc_inf %}∞{% else %}{{ '%.1f'|format(lat.g_g_c.avg) }}{% endif %}</td>
+                        <td>{% if ggc_inf %}∞{% else %}{{ '%.1f'|format(lat.g_g_c.max) }}{% endif %}</td>
+                        <td>Диагностика очередей с учётом вариативности.</td>
+                        {% else %}
+                        <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
+                        {% endif %}
+                      </tr>
                       <tr>
                         <td>M/M/1</td>
                         {% if lat.m_m_1 %}
@@ -212,7 +223,8 @@
                   <thead>
                     <tr>
                       <th>Ресурс</th>
-                      <th>Util</th>
+                      <th>Demand до масштаб.</th>
+                      <th>Util после {{ inst.suggested_m }} реплик</th>
                       <th>u_max</th>
                       <th>Запас</th>
                       <th>Инстансы</th>
@@ -222,21 +234,23 @@
                     <tr>
                       <td>CPU</td>
                       <td>{{ '%.2f'|format(util.cpu) }}</td>
+                      <td>{% if util.cpu_after_replicas is not none %}{{ '%.2f'|format(util.cpu_after_replicas) }}{% else %}n/a{% endif %}</td>
                       <td>{{ meta.u_max_cpu }}</td>
-                      <td>{{ '%+.0f%%'|format(meta.cpu_headroom_pct) }}</td>
+                      <td>{% if util.cpu_after_replicas is not none %}{{ '%+.0f%%'|format((meta.u_max_cpu|float - util.cpu_after_replicas) * 100) }}{% else %}n/a{% endif %}</td>
                       <td>{{ inst.cpu_based }}</td>
                     </tr>
                     <tr>
                       <td>RAM</td>
                       <td>{{ '%.2f'|format(util.ram) }}</td>
+                      <td>{% if util.ram_after_replicas is not none %}{{ '%.2f'|format(util.ram_after_replicas) }}{% else %}n/a{% endif %}</td>
                       <td>{{ meta.u_max_ram }}</td>
-                      <td>{{ '%+.0f%%'|format(meta.ram_headroom_pct) }}</td>
+                      <td>{% if util.ram_after_replicas is not none %}{{ '%+.0f%%'|format((meta.u_max_ram|float - util.ram_after_replicas) * 100) }}{% else %}n/a{% endif %}</td>
                       <td>{{ inst.ram_based }}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-              <div class="small text-muted">Отрицательный запас означает превышение выбранного порога утилизации.</div>
+              <div class="small text-muted">Demand до масштабирования показывает эквивалентную нагрузку, если весь target RPS пришёлся бы на один pod. Util после реплик — ожидаемая per-pod утилизация при рекомендованном числе реплик.</div>
             </div>
           </div>
         </div>

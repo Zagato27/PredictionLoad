@@ -56,6 +56,30 @@ def _fit_slope_through_origin(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.dot(x, y) / denom)
 
 
+def _predict_monotonic_latency(
+    rps_values: np.ndarray, latency_values: np.ndarray, target_rps: float
+) -> float:
+    if len(rps_values) == 0 or len(latency_values) == 0:
+        return float("nan")
+    order = np.argsort(rps_values)
+    x_sorted = rps_values[order].astype(float)
+    y_sorted = latency_values[order].astype(float)
+    unique_x: List[float] = []
+    unique_y: List[float] = []
+    for x_value in np.unique(x_sorted):
+        mask = x_sorted == x_value
+        unique_x.append(float(x_value))
+        unique_y.append(float(np.mean(y_sorted[mask])))
+    x = np.array(unique_x, dtype=float)
+    y = np.maximum.accumulate(np.array(unique_y, dtype=float))
+    if len(x) == 1:
+        return float(y[0])
+    if target_rps <= x[-1]:
+        return float(np.interp(target_rps, x, y))
+    slope = (y[-1] - y[-2]) / max(1e-9, x[-1] - x[-2])
+    return float(y[-1] + max(0.0, slope) * (target_rps - x[-1]))
+
+
 def _calc_variability(steps_df: pd.DataFrame) -> Tuple[float, float]:
     # Ca: coefficient of variation of rps between steps
     rps_vals = steps_df["rps"].to_numpy()
@@ -138,7 +162,8 @@ def _derive_params(data: InputSchema) -> DerivedParams:
 
     # Linear region for device demands
     lin = _select_linear_region(steps)
-    X = lin["rps"].to_numpy(dtype=float)
+    pods_for_fit = lin["pods"].to_numpy(dtype=float) if "pods" in lin.columns else np.ones(len(lin))
+    X = lin["rps"].to_numpy(dtype=float) / np.maximum(1.0, pods_for_fit)
     # U = X * D  => slope = D
     D_cpu = _fit_slope_through_origin(X, lin["cpu_util"].to_numpy(dtype=float))
     D_ram = _fit_slope_through_origin(X, lin["ram_util"].to_numpy(dtype=float))
@@ -213,22 +238,6 @@ def _instances_needed(u: float, u_max: float) -> int:
     return max(1, int(_m.ceil(u / u_max)))
 
 
-def _suggest_m_for_slo(
-    X: float, S_ms: float, start_c: int, slo_ms: float
-) -> Tuple[int, float]:
-    c = max(1, start_c)
-    best_c = c
-    R_ms, Pw = mmc_response_time_ms(S_ms, X, c)
-    if R_ms <= slo_ms:
-        return c, R_ms
-    for c_try in range(c + 1, c + 16):
-        R_try, _ = mmc_response_time_ms(S_ms, X, c_try)
-        if R_try <= slo_ms:
-            return c_try, R_try
-        best_c = c_try if R_try < R_ms else best_c
-    return best_c, R_ms
-
-
 def compute_forecast(data: InputSchema) -> ForecastOutput:
     # Filter out too erroneous steps for observed series.
     steps = [s for s in data.steps if s.errors_pct <= 5.0]
@@ -242,6 +251,12 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
     # Ratios
     k_peak = params.baseline_ratio_max_to_avg
     modeling = data.modeling
+    steps_rps = np.array([float(s.rps) for s in steps], dtype=float)
+    steps_avg_ms = np.array([float(s.avg_ms) for s in steps], dtype=float)
+    steps_max_ms = np.array([float(s.max_ms) for s in steps], dtype=float)
+
+    empirical_avg_ms = _predict_monotonic_latency(steps_rps, steps_avg_ms, X_target)
+    empirical_max_ms = _predict_monotonic_latency(steps_rps, steps_max_ms, X_target)
 
     # Target latencies per model
     m_m_1_avg = mm1_response_time_ms(params.S_ms, X_target) if modeling.use_m_m_1 else None
@@ -279,22 +294,26 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
     inst_io = _instances_needed(u_io, u_max_io)
     cpu_based = max(inst_cpu, 1)
     ram_based = max(inst_ram, 1)
-
-    # Suggested m for M/M/c to meet SLO if given.
-    suggested_c = c
-    if slo_ms > 0.0:
-        suggested_c, _ = _suggest_m_for_slo(X_target, params.S_ms, c, slo_ms)
+    suggested_m = int(max(cpu_based, ram_based))
 
     targets = TargetsOut(
         rps=X_target,
         latency_ms=TargetsLatency(
+            empirical=LatencyPair(avg=empirical_avg_ms, max=empirical_max_ms),
             m_m_1=LatencyPair(avg=m_m_1_avg, max=m_m_1_max) if m_m_1_avg is not None and m_m_1_max is not None else None,
             m_m_c=LatencyPair(avg=m_m_c_avg, max=m_m_c_max) if m_m_c_avg is not None and m_m_c_max is not None else None,
             kingman=LatencyPair(avg=kingman_avg, max=kingman_max) if kingman_avg is not None and kingman_max is not None else None,
             g_g_c=LatencyPair(avg=ggc_avg_ms, max=ggc_max_ms) if ggc_avg_ms is not None and ggc_max_ms is not None else None,
         ),
-        utilization=TargetsUtil(cpu=u_cpu, ram=u_ram, io=u_io),
-        instances=TargetsInstances(cpu_based=cpu_based, ram_based=ram_based, suggested_m=int(max(cpu_based, ram_based, suggested_c))),
+        utilization=TargetsUtil(
+            cpu=u_cpu,
+            ram=u_ram,
+            io=u_io,
+            cpu_after_replicas=u_cpu / suggested_m,
+            ram_after_replicas=u_ram / suggested_m,
+            io_after_replicas=u_io / suggested_m,
+        ),
+        instances=TargetsInstances(cpu_based=cpu_based, ram_based=ram_based, suggested_m=suggested_m),
     )
 
     models = ModelsOut(
@@ -328,6 +347,8 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
 
     for r in grid:
         # Predicted by models
+        empirical_avg_r = _predict_monotonic_latency(steps_rps, steps_avg_ms, r)
+        empirical_max_r = _predict_monotonic_latency(steps_rps, steps_max_ms, r)
         mm1_avg = mm1_response_time_ms(params.S_ms, r) if modeling.use_m_m_1 else None
         mm1_max = mm1_avg * k_peak if mm1_avg is not None else None
         if modeling.use_m_m_c:
@@ -356,6 +377,8 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
                 rps=float(r),
                 observed_avg_ms=obs_avg,
                 observed_max_ms=obs_max,
+                empirical_avg_ms=empirical_avg_r,
+                empirical_max_ms=empirical_max_r,
                 m_m_1_avg_ms=mm1_avg,
                 m_m_1_max_ms=mm1_max,
                 m_m_c_avg_ms=mmc_avg,
@@ -413,12 +436,12 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
         slo_text = f"SLO={int(data.target.slo_ms_max_optional)} мс"
     avg_candidates = [
         value
-        for value in (m_m_1_avg, kingman_avg, ggc_avg_ms, m_m_c_avg)
+        for value in (empirical_avg_ms, m_m_1_avg, kingman_avg, ggc_avg_ms, m_m_c_avg)
         if value is not None and math.isfinite(value)
     ]
     max_candidates = [
         value
-        for value in (m_m_1_max, kingman_max, ggc_max_ms, m_m_c_max)
+        for value in (empirical_max_ms, m_m_1_max, kingman_max, ggc_max_ms, m_m_c_max)
         if value is not None and math.isfinite(value)
     ]
     avg_range_text = (
@@ -436,25 +459,9 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
         bottleneck = "CPU"
         bottleneck_pressure = cpu_pressure
 
-    primary_model = "n/a"
-    primary_avg_ms = None
-    primary_max_ms = None
-    for model_name, avg_value, max_value in (
-        ("G/G/c", ggc_avg_ms, ggc_max_ms),
-        ("M/M/c", m_m_c_avg, m_m_c_max),
-        ("Kingman G/G/1", kingman_avg, kingman_max),
-        ("M/M/1", m_m_1_avg, m_m_1_max),
-    ):
-        if (
-            avg_value is not None
-            and max_value is not None
-            and math.isfinite(avg_value)
-            and math.isfinite(max_value)
-        ):
-            primary_model = model_name
-            primary_avg_ms = avg_value
-            primary_max_ms = max_value
-            break
+    primary_model = "Empirical observed curve"
+    primary_avg_ms = empirical_avg_ms if math.isfinite(empirical_avg_ms) else None
+    primary_max_ms = empirical_max_ms if math.isfinite(empirical_max_ms) else None
 
     slo_margin_ms = None
     if slo_ms > 0.0 and primary_max_ms is not None and math.isfinite(primary_max_ms):
@@ -476,9 +483,7 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
     if target_over_observed_ratio > 1.5:
         quality_warnings.append("Целевой RPS сильно выше наблюдаемого диапазона: экстраполяция рискованна.")
     if params.Ca > 1.0 or params.Cs > 1.5:
-        quality_warnings.append("Высокая вариативность нагрузки или сервиса: ориентируйтесь на G/G/c.")
-    if primary_model == "n/a":
-        quality_warnings.append("Нет включённой основной latency-модели.")
+        quality_warnings.append("Высокая вариативность нагрузки или сервиса: queueing-модели используйте только как диагностику.")
     if not quality_warnings:
         quality_warnings.append("Критичных предупреждений по входным данным нет.")
 
@@ -490,7 +495,8 @@ def compute_forecast(data: InputSchema) -> ForecastOutput:
         f"Сервисное время S={params.S_ms:.1f} мс. На target_rps={X_target:.0f}: "
         f"Средняя задержка {avg_range_text}; "
         f"максимальная до {max_latency_text} "
-        f"({slo_text}). Узкое место: {bottleneck} — масштабируйте на {targets.instances.suggested_m} инстанса."
+        f"({slo_text}). Основной latency-прогноз построен по наблюдаемой кривой. "
+        f"Узкое место: {bottleneck} — масштабируйте на {targets.instances.suggested_m} инстанса."
     )
 
     out = ForecastOutput(

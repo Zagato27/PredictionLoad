@@ -92,6 +92,7 @@ class LatencyPair(BaseModel):
 
 
 class TargetsLatency(BaseModel):
+    empirical: Optional[LatencyPair] = None
     m_m_1: Optional[LatencyPair] = None
     m_m_c: Optional[LatencyPair] = None
     kingman: Optional[LatencyPair] = None
@@ -102,6 +103,9 @@ class TargetsUtil(BaseModel):
     cpu: float
     ram: float
     io: float
+    cpu_after_replicas: Optional[float] = None
+    ram_after_replicas: Optional[float] = None
+    io_after_replicas: Optional[float] = None
 
 
 class TargetsInstances(BaseModel):
@@ -138,6 +142,8 @@ class SeriesLatencyPoint(BaseModel):
     rps: float
     observed_avg_ms: Optional[float] = None
     observed_max_ms: Optional[float] = None
+    empirical_avg_ms: Optional[float] = None
+    empirical_max_ms: Optional[float] = None
     m_m_1_avg_ms: Optional[float] = None
     m_m_1_max_ms: Optional[float] = None
     m_m_c_avg_ms: Optional[float] = None
