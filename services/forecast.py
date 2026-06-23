@@ -32,6 +32,8 @@ from services.schemas import (
 
 INTERCEPT_EPS = 0.05
 GROWTH_THRESHOLD = 0.2
+MIN_LINEAR_REGION_STEPS = 3
+UTIL_GROWTH_FLOOR = 0.20
 VARIABILITY_NOTE = (
     "Ca — разброс RPS между ступенями; Cs — прокси tail latency (max-avg)/avg. "
     "Не являются классическими CV интервалов прибытия и сервисного времени."
@@ -91,6 +93,13 @@ def _median_util_per_rps(steps_df: pd.DataFrame, util_col: str) -> float:
     return float(np.median(ratios))
 
 
+def _fit_util_regression(steps_df: pd.DataFrame, util_col: str) -> Tuple[float, float]:
+    pods = steps_df["pods"].to_numpy(dtype=float) if "pods" in steps_df.columns else np.ones(len(steps_df))
+    x = steps_df["rps"].to_numpy(dtype=float) / np.maximum(1.0, pods)
+    y = steps_df[util_col].to_numpy(dtype=float)
+    return _fit_slope_with_intercept(x, y)
+
+
 def _resolve_slope(
     intercept: float,
     slope: float,
@@ -101,12 +110,13 @@ def _resolve_slope(
 ) -> Tuple[float, float]:
     if np.isfinite(slope) and slope > 0:
         return intercept, slope
-    fallback = _median_util_per_rps(steps_df, util_col)
-    if np.isfinite(fallback) and fallback > 0:
+    fallback_intercept, fallback_slope = _fit_util_regression(steps_df, util_col)
+    if np.isfinite(fallback_slope) and fallback_slope > 0:
         warnings.append(
-            f"Регрессия {label} нестабильна; использована медиана util/rps_per_pod={fallback:.4f}."
+            f"Регрессия {label} на линейном участке нестабильна; "
+            f"использованы все ступени (intercept={fallback_intercept:.3f}, slope={fallback_slope:.4f})."
         )
-        return 0.0, fallback
+        return fallback_intercept, fallback_slope
     warnings.append(f"Не удалось оценить спрос {label} по ступеням.")
     return 0.0, float("nan")
 
@@ -190,14 +200,24 @@ def _select_linear_region(steps_df: pd.DataFrame) -> pd.DataFrame:
     prev_ram = float(df.iloc[0]["ram_util"])
     for idx, row in df.iloc[1:].iterrows():
         avg_grow = _relative_growth(float(row["avg_ms"]), prev_avg)
-        cpu_grow = _relative_growth(float(row["cpu_util"]), prev_cpu)
-        ram_grow = _relative_growth(float(row["ram_util"]), prev_ram)
+        cpu_grow = (
+            _relative_growth(float(row["cpu_util"]), prev_cpu)
+            if prev_cpu >= UTIL_GROWTH_FLOOR
+            else 0.0
+        )
+        ram_grow = (
+            _relative_growth(float(row["ram_util"]), prev_ram)
+            if prev_ram >= UTIL_GROWTH_FLOOR
+            else 0.0
+        )
         if avg_grow > GROWTH_THRESHOLD or cpu_grow > GROWTH_THRESHOLD or ram_grow > GROWTH_THRESHOLD:
             break
         keep_idx.append(idx)
         prev_avg = float(row["avg_ms"])
         prev_cpu = float(row["cpu_util"])
         prev_ram = float(row["ram_util"])
+    if len(keep_idx) < MIN_LINEAR_REGION_STEPS:
+        return df
     return df.loc[keep_idx]
 
 
@@ -280,6 +300,11 @@ def _derive_params(data: InputSchema, usable_steps: List[Step]) -> DerivedParams
             mem_lim_pp.append(float(row.get("mem_limit_mib_per_pod") or 0.0))
 
     lin = _select_linear_region(steps)
+    if len(lin) < len(steps):
+        warnings.append(
+            f"Линейный участок ресурсов: {len(lin)} из {len(steps)} ступеней "
+            f"(обрезка по росту latency/CPU/RAM > {GROWTH_THRESHOLD:.0%})."
+        )
     pods_for_fit = lin["pods"].to_numpy(dtype=float) if "pods" in lin.columns else np.ones(len(lin))
     x = lin["rps"].to_numpy(dtype=float) / np.maximum(1.0, pods_for_fit)
 

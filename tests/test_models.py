@@ -142,6 +142,16 @@ class TestModels(unittest.TestCase):
         self.assertEqual(out.meta.excluded_steps, 1)
         self.assertLess(out.targets.utilization.cpu, 50.0)
 
+    def test_test_json_replicas_not_inflated_by_ram_fallback(self):
+        root = os.path.dirname(os.path.dirname(__file__))
+        test_path = os.path.join(root, "data", "test.json")
+        with open(test_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        out = compute_forecast(_validate(payload))
+        self.assertLessEqual(out.targets.instances.suggested_m, 12)
+        self.assertEqual(out.targets.instances.ram_based, 2)
+        self.assertGreaterEqual(out.targets.instances.cpu_based, 8)
+
 
 if __name__ == "__main__":
     unittest.main()
