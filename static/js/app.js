@@ -85,9 +85,10 @@ function buildCompactForecastReport(forecast, pageMeta) {
     '',
     'Рекомендация',
     `- Реплики: ${instances.suggested_m || meta.recommended_replicas || 'n/a'}`,
-    `- Ограничивающий ресурс: ${meta.bottleneck || 'n/a'}`,
+    `- Ограничивающий ресурс: ${meta.bottleneck || 'n/a'} (после масштабирования)`,
     `- CPU-based: ${instances.cpu_based || 'n/a'}`,
     `- RAM-based: ${instances.ram_based || 'n/a'}`,
+    `- IO-based: ${instances.io_based || 'n/a'}`,
     '',
     'Ресурсы на target RPS',
     `- CPU demand до масштабирования: ${formatNumber((utilization.cpu || 0) * 100, 1)}% от одного pod`,
@@ -391,16 +392,18 @@ window.renderForecastCharts = function (forecast) {
       uMaxCpu !== null ? roundOrNull(uMaxCpu * 100, 1) : null,
       typeof p.cpu === 'number' && Number.isFinite(p.cpu) && uMaxCpu !== null ? roundOrNull((p.cpu / uMaxCpu) * 100, 1) : null,
       typeof p.cpu === 'number' && Number.isFinite(p.cpu) && uMaxCpu !== null ? roundOrNull((uMaxCpu - p.cpu) * 100, 1) : null,
+      typeof p.cpu_demand === 'number' && Number.isFinite(p.cpu_demand) ? roundOrNull(p.cpu_demand * 100, 1) : null,
     ]);
     const ramHeadroomDetails = util.map((p) => [
       typeof p.ram === 'number' && Number.isFinite(p.ram) ? roundOrNull(p.ram * 100, 1) : null,
       uMaxRam !== null ? roundOrNull(uMaxRam * 100, 1) : null,
       typeof p.ram === 'number' && Number.isFinite(p.ram) && uMaxRam !== null ? roundOrNull((p.ram / uMaxRam) * 100, 1) : null,
       typeof p.ram === 'number' && Number.isFinite(p.ram) && uMaxRam !== null ? roundOrNull((uMaxRam - p.ram) * 100, 1) : null,
+      typeof p.ram_demand === 'number' && Number.isFinite(p.ram_demand) ? roundOrNull(p.ram_demand * 100, 1) : null,
     ]);
 
-    const recommendedInstances = inst.map((p) => Math.max(p.instances_cpu || 0, p.instances_ram || 0));
-    const recommendedInstanceDetails = inst.map((p) => [p.instances_cpu || 0, p.instances_ram || 0]);
+    const recommendedInstances = inst.map((p) => Math.max(p.instances_cpu || 0, p.instances_ram || 0, p.instances_io || 0));
+    const recommendedInstanceDetails = inst.map((p) => [p.instances_cpu || 0, p.instances_ram || 0, p.instances_io || 0]);
 
     const charts = [];
     const targetMarkLine = targetRps ? [{xAxis: roundOrNull(targetRps, 1), name: 'target RPS'}] : [];
@@ -479,8 +482,8 @@ window.renderForecastCharts = function (forecast) {
             const title = params.length ? `RPS ${formatNumber(params[0].value[0], 1)}` : '';
             const rows = params.map((param) => {
               const details = param.data.details || [];
-              return `${param.marker}${param.seriesName}: ${formatNumber(details[0], 1)}%<br>` +
-                `Порог: ${formatNumber(details[1], 1)}% · Запас: ${formatSignedNumber(details[3], 1)}% · Лимит: ${formatNumber(details[2], 1)}%`;
+              return `${param.marker}${param.seriesName} per-pod: ${formatNumber(details[0], 1)}%<br>` +
+                `Demand: ${formatNumber(details[4], 1)}% · Порог: ${formatNumber(details[1], 1)}% · Запас: ${formatSignedNumber(details[3], 1)}%`;
             });
             return [title, ...rows].join('<br>');
           },
@@ -488,7 +491,7 @@ window.renderForecastCharts = function (forecast) {
         legend: {top: 0},
         grid: {left: 56, right: 24, top: 48, bottom: 48},
         xAxis: {type: 'value', name: 'RPS', nameLocation: 'middle', nameGap: 28},
-        yAxis: {type: 'value', name: 'util', nameLocation: 'middle', nameGap: 42},
+        yAxis: {type: 'value', name: 'per-pod util', nameLocation: 'middle', nameGap: 42},
         dataZoom: [{type: 'inside'}, {type: 'slider', height: 18, bottom: 8}],
         series: [
         {
@@ -537,7 +540,7 @@ window.renderForecastCharts = function (forecast) {
             const title = params.length ? `RPS ${formatNumber(params[0].value[0], 1)}` : '';
             const rows = params.map((param) => `${param.marker}${param.seriesName}: ${formatNumber(param.value[1], 0)} реплик`);
             const details = params[0] && params[0].data.details ? params[0].data.details : [];
-            if (details.length) rows.push(`Итог: CPU ${formatNumber(details[0], 0)} / RAM ${formatNumber(details[1], 0)}`);
+            if (details.length) rows.push(`Итог: CPU ${formatNumber(details[0], 0)} / RAM ${formatNumber(details[1], 0)} / IO ${formatNumber(details[2], 0)}`);
             return [title, ...rows].join('<br>');
           },
         },

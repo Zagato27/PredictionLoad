@@ -111,6 +111,7 @@ class TargetsUtil(BaseModel):
 class TargetsInstances(BaseModel):
     cpu_based: int
     ram_based: int
+    io_based: int
     suggested_m: int
 
 
@@ -135,7 +136,8 @@ class ModelsOut(BaseModel):
     service_time_ms: float
     variability: Variability
     mmc: MMCOut
-    kube: Optional[Dict[str, float]] = None  # avg requests/limits per pod, etc.
+    kube: Optional[Dict[str, float]] = None
+    variability_note: str = ""
 
 
 class SeriesLatencyPoint(BaseModel):
@@ -156,6 +158,9 @@ class SeriesLatencyPoint(BaseModel):
 
 class SeriesUtilPoint(BaseModel):
     rps: float
+    cpu_demand: Optional[float] = None
+    ram_demand: Optional[float] = None
+    io_demand: Optional[float] = None
     cpu: Optional[float] = None
     ram: Optional[float] = None
     io: Optional[float] = None
@@ -196,6 +201,7 @@ class ForecastMeta(BaseModel):
     cpu_headroom_pct: float
     ram_headroom_pct: float
     quality_warnings: List[str] = Field(default_factory=list)
+    has_unstable_models: bool = False
 
 
 class ForecastOutput(BaseModel):

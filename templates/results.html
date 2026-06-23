@@ -56,7 +56,7 @@
             <div class="card-body">
               <div class="text-muted small">Рекомендуемые реплики</div>
               <div class="fs-4 fw-semibold">{{ meta.recommended_replicas }}</div>
-              <div class="small">CPU {{ inst.cpu_based }} · RAM {{ inst.ram_based }}</div>
+              <div class="small">CPU {{ inst.cpu_based }} · RAM {{ inst.ram_based }}{% if inst.io_based and inst.io_based > 1 %} · IO {{ inst.io_based }}{% endif %}</div>
             </div>
           </div>
         </div>
@@ -65,7 +65,7 @@
             <div class="card-body">
               <div class="text-muted small">Ограничивающий ресурс</div>
               <div class="fs-4 fw-semibold">{{ meta.bottleneck }}</div>
-              <div class="small">Давление {{ '%.0f'|format(meta.bottleneck_pressure * 100) }}% от порога</div>
+              <div class="small">Давление {{ '%.0f'|format(meta.bottleneck_pressure * 100) }}% от порога (после {{ inst.suggested_m }} реплик)</div>
             </div>
           </div>
         </div>
@@ -109,7 +109,7 @@
                 <div class="col-6"><span class="text-muted small">Ступеней</span><br><b>{{ meta.used_steps }}/{{ meta.observed_steps }}</b></div>
                 <div class="col-6"><span class="text-muted small">Линейный участок</span><br><b>{{ meta.linear_steps }}</b></div>
                 <div class="col-6"><span class="text-muted small">Target / max observed</span><br><b>{{ '%.2f'|format(meta.target_over_observed_ratio) }}x</b></div>
-                <div class="col-6"><span class="text-muted small">S</span><br><b>{{ '%.1f'|format(result_json.models.service_time_ms) }} мс</b></div>
+                <div class="col-6"><span class="text-muted small">S (low-load avg)</span><br><b>{{ '%.1f'|format(result_json.models.service_time_ms) }} мс</b></div>
               </div>
               <ul class="small mb-0">
                 {% for warning in meta.quality_warnings %}
@@ -150,7 +150,7 @@
                   </tbody>
                 </table>
               </div>
-              <div class="small text-muted mb-2">Queueing-модели ниже используются как инженерная диагностика, а не как основной прогноз задержки.</div>
+              <div class="small text-muted mb-2">Queueing-модели ниже — диагностика: S из low-load avg_ms, M/M/c и G/G/c с λ=total RPS и c=max(реплики, mmc_c), M/M/1 и Kingman с λ на pod.</div>
               <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#diagnostic-models" aria-expanded="false" aria-controls="diagnostic-models">Показать диагностические модели</button>
               <div class="collapse mt-3" id="diagnostic-models">
                 <div class="table-responsive">
@@ -170,7 +170,7 @@
                         {% set mmc_inf = (lat.m_m_c.avg|string) == 'inf' or (lat.m_m_c.max|string) == 'inf' %}
                         <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.avg) }}{% endif %}</td>
                         <td>{% if mmc_inf %}∞{% else %}{{ '%.1f'|format(lat.m_m_c.max) }}{% endif %}</td>
-                        <td>Очередь с c={{ result_json.models.mmc.c }} каналами.</td>
+                        <td>Очередь: λ=total RPS, c={{ result_json.models.mmc.c }}.</td>
                         {% else %}
                         <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
                         {% endif %}
@@ -191,7 +191,7 @@
                         {% if lat.m_m_1 %}
                         <td>{% if (lat.m_m_1.avg|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.m_m_1.avg) }}{% endif %}</td>
                         <td>{% if (lat.m_m_1.max|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.m_m_1.max) }}{% endif %}</td>
-                        <td>Baseline для одной реплики.</td>
+                        <td>λ на pod после масштабирования, S из low-load avg.</td>
                         {% else %}
                         <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
                         {% endif %}
@@ -201,7 +201,7 @@
                         {% if lat.kingman %}
                         <td>{% if (lat.kingman.avg|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.kingman.avg) }}{% endif %}</td>
                         <td>{% if (lat.kingman.max|string) == 'inf' %}∞{% else %}{{ '%.1f'|format(lat.kingman.max) }}{% endif %}</td>
-                        <td>Показывает влияние вариативности на один канал.</td>
+                        <td>λ на pod, вариативность Ca/Cs — прокси по ступеням.</td>
                         {% else %}
                         <td colspan="3"><span class="badge bg-secondary">Отключено</span></td>
                         {% endif %}
@@ -247,6 +247,16 @@
                       <td>{% if util.ram_after_replicas is not none %}{{ '%+.0f%%'|format((meta.u_max_ram|float - util.ram_after_replicas) * 100) }}{% else %}n/a{% endif %}</td>
                       <td>{{ inst.ram_based }}</td>
                     </tr>
+                    {% if util.io > 0 or inst.io_based > 1 %}
+                    <tr>
+                      <td>IO</td>
+                      <td>{{ '%.2f'|format(util.io) }}</td>
+                      <td>{% if util.io_after_replicas is not none %}{{ '%.2f'|format(util.io_after_replicas) }}{% else %}n/a{% endif %}</td>
+                      <td>—</td>
+                      <td>n/a</td>
+                      <td>{{ inst.io_based }}</td>
+                    </tr>
+                    {% endif %}
                   </tbody>
                 </table>
               </div>
@@ -264,7 +274,7 @@
             <div id="chart-engineering-latency" style="height:420px;" aria-label="Инженерный график всех latency-моделей."></div>
           </div>
           <div class="mb-3">
-            <h6>Утилизация CPU/RAM</h6>
+            <h6>Per-pod утилизация CPU/RAM (после авто-масштабирования)</h6>
             <div id="chart-engineering-util" style="height:360px;" aria-label="Инженерный график утилизации CPU и RAM."></div>
           </div>
           <div>
@@ -281,7 +291,7 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="{{ url_for('static', filename='js/app.js') }}?v=echarts-20260623"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v=echarts-20260624"></script>
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         window.renderForecastCharts(window.FORECAST_DATA, window.PAGE_META);
