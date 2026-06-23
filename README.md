@@ -108,6 +108,9 @@ docker run --rm -p 8000:8000 -e PORT=8000 forecast-svc
 
 ### Формат входного JSON (кратко)
 Kubernetes-поля (см. `data/sample.json`):
+
+В каждой ступени `rps` — общий RPS по всем pod’ам, `pods` — число pod’ов на этой ступени. Поля `cpu_usage_m` и `mem_workingset_mib` вводятся как средние значения на один pod; requests/limits также задаются на один pod.
+
 ```json
 {
   "steps": [

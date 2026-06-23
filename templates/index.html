@@ -94,10 +94,10 @@
             <div class="card">
               <div class="card-header">Подсказки</div>
               <div class="card-body small">
-                <p>Заполняйте ступени последовательно: каждая ступень описывает один уровень нагрузки и фактическое потребление CPU/RAM.</p>
+                <p>Заполняйте ступени последовательно: каждая ступень описывает общий уровень нагрузки и среднее потребление ресурсов на один pod.</p>
                 <ul class="mb-2">
-                  <li><b>RPS</b>, <b>avg/max</b> и <b>errors</b> описывают результат нагрузочного теста.</li>
-                  <li><b>pods</b>, CPU usage/request/limit и RAM working set/request/limit нужны для прогноза масштабирования.</li>
+                  <li><b>Total RPS</b>, <b>avg/max</b> и <b>errors</b> описывают результат нагрузочного теста по всем pod’ам.</li>
+                  <li><b>Pods</b> — число pod’ов на ступени; CPU usage/request/limit и RAM working set/request/limit вводятся на один pod.</li>
                   <li>Минимум нужно две ступени; при сохранении набор валидируется теми же схемами, что и расчёт.</li>
                   <li>По умолчанию считаются все модели: M/M/1, M/M/c, G/G/1 и G/G/c.</li>
                 </ul>
@@ -120,7 +120,7 @@
               <input class="form-control" data-field="step" required>
             </div>
             <div class="col-md-2">
-              <label class="form-label">RPS</label>
+              <label class="form-label">Total RPS</label>
               <input class="form-control" type="number" step="0.01" min="0.01" data-field="rps" required>
             </div>
             <div class="col-md-2">
@@ -136,11 +136,11 @@
               <input class="form-control" type="number" step="0.01" min="0" data-field="errors_pct" required>
             </div>
             <div class="col-md-2">
-              <label class="form-label">Pods</label>
+              <label class="form-label">Pods on step</label>
               <input class="form-control" type="number" step="1" min="1" data-field="pods" required>
             </div>
             <div class="col-md-4">
-              <label class="form-label">CPU usage, m</label>
+              <label class="form-label">CPU usage / pod, m</label>
               <input class="form-control" type="number" step="0.01" min="0" data-field="cpu_usage_m" required>
             </div>
             <div class="col-md-4">
@@ -152,7 +152,7 @@
               <input class="form-control" type="number" step="0.01" min="0" data-field="cpu_limit_m_per_pod">
             </div>
             <div class="col-md-4">
-              <label class="form-label">RAM working set, MiB</label>
+              <label class="form-label">RAM working set / pod, MiB</label>
               <input class="form-control" type="number" step="0.01" min="0" data-field="mem_workingset_mib" required>
             </div>
             <div class="col-md-4">

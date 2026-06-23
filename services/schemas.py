@@ -28,6 +28,7 @@ class Step(BaseModel):
     io_util: Optional[util_float] = None  # type: ignore
     # Kubernetes metrics.
     pods: Optional[conint(ge=1)] = None  # type: ignore
+    # Per-pod resource usage; rps remains total step throughput.
     cpu_usage_m: Optional[non_negative_float] = None  # type: ignore
     cpu_request_m_per_pod: Optional[non_negative_float] = None  # type: ignore
     cpu_limit_m_per_pod: Optional[non_negative_float] = None  # type: ignore

@@ -115,21 +115,21 @@ def _derive_params(data: InputSchema) -> DerivedParams:
             mem_req_pp.append(float(row.get("mem_request_mib_per_pod") or 0.0))
         if pods and row.get("mem_limit_mib_per_pod") is not None:
             mem_lim_pp.append(float(row.get("mem_limit_mib_per_pod") or 0.0))
-        # CPU utilization (prefer absolute usage normalized by requests, else legacy)
+        # CPU usage is entered per pod and normalized by per-pod requests.
         if pods and row.get("cpu_request_m_per_pod") is not None and row.get("cpu_usage_m") is not None:
-            total_req = float(pods) * float(row.get("cpu_request_m_per_pod", 0.0))
+            pod_req = float(row.get("cpu_request_m_per_pod", 0.0))
             u = 0.0
-            if total_req > 0:
-                u = _clamp(float(row.get("cpu_usage_m", 0.0)) / total_req, 0.0, 1.5)
+            if pod_req > 0:
+                u = _clamp(float(row.get("cpu_usage_m", 0.0)) / pod_req, 0.0, 1.5)
             cpu_utils.append(u)
         else:
             cpu_utils.append(float(row.get("cpu_util", float("nan"))))
-        # RAM utilization (prefer workingset normalized by requests, else legacy)
+        # RAM working set is entered per pod and normalized by per-pod requests.
         if pods and row.get("mem_request_mib_per_pod") is not None and row.get("mem_workingset_mib") is not None:
-            total_mem_req = float(pods) * float(row.get("mem_request_mib_per_pod", 0.0))
+            pod_mem_req = float(row.get("mem_request_mib_per_pod", 0.0))
             u = 0.0
-            if total_mem_req > 0:
-                u = _clamp(float(row.get("mem_workingset_mib", 0.0)) / total_mem_req, 0.0, 1.5)
+            if pod_mem_req > 0:
+                u = _clamp(float(row.get("mem_workingset_mib", 0.0)) / pod_mem_req, 0.0, 1.5)
             ram_utils.append(u)
         else:
             ram_utils.append(float(row.get("ram_util", float("nan"))))
